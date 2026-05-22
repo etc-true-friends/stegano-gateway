@@ -17,7 +17,11 @@ venv/
 # 3. 로컬 워크스페이스 (대용량 데이터 및 격리 구역 전체 차단)
 # =========================
 # (checkpoints, dataset_*, test_images 등 모든 무거운 파일이 포함됨)
-4_Local_Workspace/
+#4_Local_Workspace/
+4_Local_Workspace/dataset/ 
+4_Local_Workspace/uploads/
+4_Local_Workspace/sanitized/
+4_Local_Workspace/quarantine/
 
 # =========================
 # 4. API 서버 및 데모 임시 파일 (생성 예정)
@@ -29,7 +33,10 @@ quarantine/
 # =========================
 # 5. 로그 및 대용량 확장자 전역 차단
 # =========================
-*.pt
-*.pth
 *.log
 *.csv
+
+# 체크포인트 폴더는 올리기 (가중치 파일 포함)
+!4_Local_Workspace/
+!4_Local_Workspace/checkpoints/
+!4_Local_Workspace/checkpoints/*.pt
