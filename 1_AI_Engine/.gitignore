@@ -1,0 +1,19 @@
+# ==========================================
+# 1_AI_Engine 로컬 캐시 및 예외 설정
+# ==========================================
+
+# 파이썬 컴파일 캐시 격리
+__pycache__/
+model/__pycache__/
+dataset/__pycache__/
+opts/__pycache__/
+utils/__pycache__/
+tools/__pycache__/
+
+# 로컬 테스트용 로그 스키마 차단
+*.log
+
+# 2차 안전장치: 혹시 모를 로컬 가중치 생성 폴더 차단
+# (가중치는 4_Local_Workspace/checkpoints/에 저장되지만, 
+#  실수로 로컬 경로에 생성될 경우를 대비한 보험 규칙)
+checkpoints/
