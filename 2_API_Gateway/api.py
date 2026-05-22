@@ -4,7 +4,7 @@
 - 1선 AI 방어선: 파인튜닝된 SRNet 기반 은닉률 추론
 - 2선 물리 방어선: CDR Sanitizer 기반 픽셀 구조 무해화
 - 자산 통제: 위협 파일 격리(Quarantine) 및 접근 권한 제한
-- 감사 통제: SQLite3 기반 관제 로그 영구 보존
+- 감사 통제: SQLite3 기반 관제 로그 영구 보존 및 지표 산출 (/health, /stats)
 """
 
 import io
@@ -15,7 +15,7 @@ import shutil
 import sqlite3
 import magic
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 import torch
 
 # MSA 구조 경로 인식 설정
@@ -89,6 +89,71 @@ def read_root():
         "version": "2026.05.22"
     }
 
+# ─────────────────────────────────────────────────
+# [고도화] 시스템 상태 체크 엔드포인트 (인프라 및 DevOps용)
+# ─────────────────────────────────────────────────
+@app.get("/health")
+async def health_check():
+    """
+    인프라 가용성 및 내부 핵심 자산(DB, 격리 폴더) 무결성 진단
+    - 추후 Docker-compose 헬스체크 및 AWS 인프라 모니터링 연동용
+    """
+    db_ok = os.path.exists(DB_PATH)
+    quarantine_ok = os.path.exists(QUARANTINE_DIR)
+    
+    status = "healthy" if (db_ok and quarantine_ok) else "degraded"
+    
+    return {
+        "status": status,
+        "timestamp": datetime.now().isoformat(),
+        "infrastructure": {
+            "database_connected": db_ok,
+            "quarantine_storage": quarantine_ok
+        }
+    }
+
+# ─────────────────────────────────────────────────
+# [고도화] 관제 통계 산출 엔드포인트 (대시보드 실시간 UI 연동용)
+# ─────────────────────────────────────────────────
+@app.get("/stats")
+async def get_gateway_statistics():
+    """
+    보안팀 관제 대시보드 실시간 시각화용 데이터 통계 연산
+    - 누적 트래픽, 위협 탐지율, 리스크 분포도 데이터 반환
+    """
+    if not os.path.exists(DB_PATH):
+        return {
+            "total_traffic": 0,
+            "threat_detected": 0,
+            "bypass_count": 0,
+            "risk_distribution": {}
+        }
+        
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # 전체 검사 건수 및 위협 탐지(SUSPICIOUS) 건수 실시간 연산
+        cursor.execute("SELECT COUNT(*), SUM(CASE WHEN verdict='SUSPICIOUS' THEN 1 ELSE 0 END) FROM audit_logs")
+        total, suspicious = cursor.fetchone()
+        suspicious = suspicious if suspicious else 0
+        
+        # 리스크 등급별(HIGH / MEDIUM / LOW) 통계 분포 데이터 추출
+        cursor.execute("SELECT risk_level, COUNT(*) FROM audit_logs GROUP BY risk_level")
+        risk_dist = dict(cursor.fetchall())
+        
+        conn.close()
+        
+        return {
+            "total_traffic": total,
+            "threat_detected": suspicious,
+            "bypass_count": total - suspicious,
+            "risk_distribution": risk_dist,
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"지표 산출 실패: {str(e)}")
+
 @app.get("/audit")
 def get_audit():
     """SQLite3에서 로그를 판독하여 대시보드 통계 및 감사 테이블로 전달"""
@@ -119,7 +184,6 @@ async def scan_and_sanitize(file: UploadFile = File(...)):
     allowed_mimes = ["image/png", "image/jpeg"]
     
     if mime_type not in allowed_mimes:
-        # 정책 위반 파일은 프로세스 조기 종료 및 격리 처리 없이 즉시 거부
         return {
             "status": "error",
             "message": f"Policy Violation: Unsupported file type ({mime_type}). Only PNG and JPEG are allowed."
@@ -130,9 +194,9 @@ async def scan_and_sanitize(file: UploadFile = File(...)):
     with open(input_path, "wb") as f:
         f.write(contents)
 
+    action = "BYPASS" # 에러 발생 핸들링용 초기화
     try:
         # [Step 2: AI 은닉 데이터 변조 탐지]
-        import torch
         from PIL import Image
         import numpy as np
         
@@ -146,11 +210,10 @@ async def scan_and_sanitize(file: UploadFile = File(...)):
         with torch.no_grad():
             output = model(img_tensor)
             prob = torch.softmax(output, dim=1)[0]
-            pred = output.data.max(1)[1].item()
 
         stego_prob_pct = prob[1].item() * 100
         
-        # 위험 등급 분류 및 조치 액션 정의
+        # 위험 등급 분류 및 조치 액션 정의 (보안 민감도 30% 하향 튜닝 완료)
         if stego_prob_pct >= 75.0:
             risk_level = "HIGH"
             verdict = "SUSPICIOUS"
@@ -173,7 +236,6 @@ async def scan_and_sanitize(file: UploadFile = File(...)):
         if action == "QUARANTINE":
             quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
             shutil.move(input_path, quarantine_path)
-            # 보안성 강화: 파일 권한을 Read-Only(440)로 하향 조정하여 무단 실행 및 변경 방지
             try:
                 os.chmod(quarantine_path, 0o440)
             except:
@@ -209,7 +271,6 @@ async def scan_and_sanitize(file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        # 에러 발생 시 파일 무결성을 위해 생성 중이던 파일 파쇄
         if os.path.exists(input_path) and action != "QUARANTINE":
             os.remove(input_path)
         return {"status": "error", "message": str(e)}
