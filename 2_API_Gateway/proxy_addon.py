@@ -1,133 +1,186 @@
 """
-/etc/friends mitmproxy 인라인 트래픽 제어 애드온 (최종 완성본)
-- 이미지 트래픽 자동 감지 및 가로채기
-- 고도화된 api.py /scan API 연동 규격 준수
-- 클라이언트 IP 주소 기반 INBOUND / OUTBOUND 실시간 자동 판별
-- MIME 검증 실패(400) 시 보안팀 커스텀 403 Forbidden 대피 페이지 사출
+/etc/friends mitmproxy 인라인 트래픽 제어 애드온 
 """
-
+import os
+import re
+import base64
 import requests
 from mitmproxy import http
 
-# API 서버 주소 및 검사 대상 확장자 정의
-API_URL = "http://127.0.0.1:8000/scan"
+API_URL = os.getenv("API_URL", "http://localhost:8000/scan")
 IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg"}
 
+# 500 에러 방지용 256x256 픽셀 정상 PNG 이미지 바이너리 (Base64)
+MOCK_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAACv0lEQVR4nO3TMQEAIAzAsIH/C3e4QQZHEwV9uuaegar9OwB+"
+    "MgBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZ"
+    "gDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxA"
+    "mgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDN"
+    "AKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA"
+    "0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBp"
+    "BiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQD"
+    "kGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFI"
+    "MwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZ"
+    "gDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxA"
+    "mgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDNAKQZgDQDkGYA0gxAmgFIMwBpBiDN"
+    "AKQZgDQDkGYA0h7VsgNrD8aOMAAAAABJRU5ErkJggg=="
+)
+MOCK_PNG = base64.b64decode(MOCK_BASE64)
 
 class SteganoCDRAddon:
     def __init__(self):
         print("[+] /etc/friends Stegano CDR mitmproxy Addon Loaded.")
 
     def is_internal(self, ip: str) -> bool:
-        """클라이언트 IP가 사설 및 루프백 대역폭(내부망)에 속하는지 검증"""
         if not ip:
             return False
         return (
-            ip.startswith("127.") or 
-            ip.startswith("192.168.") or 
+            ip.startswith("127.") or
+            ip.startswith("192.168.") or
             ip.startswith("10.") or
-            ip == "::1"  # IPv6 루프백 대응
+            ip.startswith("172.") or
+            ip == "::1"
         )
 
     def request(self, flow: http.HTTPFlow):
-        """
-        [OUTBOUND 통제] 내부망 사용자가 외부로 이미지 업로드(반출) 시 가로채기
-        """
-        # 클라이언트 IP 추출
-        client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else "127.0.0.1"
-        content_type = flow.request.headers.get("content-type", "").lower()
+        host = flow.request.pretty_host
+        path = flow.request.path
 
-        # 내부망 유저가 이미지를 반출하려는 조건 부합 시 작동
+        # ─────────────────────────────────────────────────
+        # [모의 망연계 포털] 전용 인터셉트 통제 로직
+        # ─────────────────────────────────────────────────
+        if "external-mail-server.local" in host:
+            
+            # [CASE 1] OUTBOUND: 파일 반출 (POST)
+            if "/api/v1/upload" in path and flow.request.method == "POST":
+                print("\n" + "="*60)
+                print("[*] 모의 포털 [OUTBOUND] 반출 트래픽 감지!")
+                
+                raw_file = None
+                content_type = flow.request.headers.get("content-type", "")
+                boundary_match = re.search(r"boundary=(.+)", content_type, re.IGNORECASE)
+                
+                # 정밀 바이너리 파서: WebKit 따옴표 예외 처리 반영
+                if boundary_match:
+                    boundary = boundary_match.group(1).strip().strip('"').encode('utf-8')
+                    parts = flow.request.content.split(b"--" + boundary)
+                    for part in parts:
+                        if b'name="file"' in part:
+                            if b"\r\n\r\n" in part:
+                                _, file_bytes = part.split(b"\r\n\r\n", 1)
+                                if file_bytes.endswith(b"\r\n"):
+                                    file_bytes = file_bytes[:-2]
+                                if file_bytes.endswith(b"--\r\n"):
+                                    file_bytes = file_bytes[:-4]
+                                elif file_bytes.endswith(b"--"):
+                                    file_bytes = file_bytes[:-2]
+                                raw_file = file_bytes
+                                break
+                
+                if not raw_file:
+                    print("[!] 바이너리 파싱 폴백 -> 전체 Content 참조")
+                    raw_file = flow.request.content
+
+                print(f"[+] API 호출 대상: {API_URL}")
+                print(f"[+] 전송 파일 크기: {len(raw_file)} bytes")
+
+                try:
+                    response = requests.post(
+                        API_URL,
+                        files={"file": ("outbound_leak_attempt.png", raw_file, "image/png")},
+                        data={"direction": "OUTBOUND"},
+                        timeout=10.0,
+                        proxies={"http": None, "https": None}
+                    )
+                    
+                    print(f"[+] API 응답 상태 코드: {response.status_code}")
+                    print(f"[+] API 판정 결과 (Verdict): {response.headers.get('X-Gateway-Verdict', '없음')}")
+                    
+                    headers = {k: v for k, v in response.headers.items() if k.lower().startswith("x-gateway-") or k.lower() == "content-type"}
+                    headers["Access-Control-Allow-Origin"] = "*"
+                    headers["Access-Control-Expose-Headers"] = "*"
+                    
+                    flow.response = http.Response.make(response.status_code, response.content, headers)
+                    print("[+] 브라우저 모의 포털로 데이터 릴레이 완료.")
+                    print("="*60 + "\n")
+                except Exception as e:
+                    print(f"[ERROR] OUTBOUND API 연동 실패: {e}")
+                    flow.response = http.Response.make(502, b"Gateway Error", {"Content-Type": "text/plain"})
+                    print("="*60 + "\n")
+                return
+
+            # [CASE 2] INBOUND: 외부 파일 수신/다운로드 (GET)
+            elif "/api/v1/download" in path and flow.request.method == "GET":
+                print("\n" + "="*60)
+                print("[*] 모의 포털 [INBOUND] 반입 트래픽 감지!")
+                print(f"[+] API 호출 대상: {API_URL}")
+                print(f"[+] 전송 파일 크기 (정렬 규격): {len(MOCK_PNG)} bytes")
+                
+                try:
+                    response = requests.post(
+                        API_URL,
+                        files={"file": ("inbound_intrusion_attempt.png", MOCK_PNG, "image/png")},
+                        data={"direction": "INBOUND"},
+                        timeout=10.0,
+                        proxies={"http": None, "https": None}
+                    )
+                    
+                    print(f"[+] API 응답 상태 코드: {response.status_code}")
+                    print(f"[+] API 판정 결과 (Verdict): {response.headers.get('X-Gateway-Verdict', '없음')}")
+                    
+                    headers = {k: v for k, v in response.headers.items() if k.lower().startswith("x-gateway-") or k.lower() == "content-type"}
+                    headers["Access-Control-Allow-Origin"] = "*"
+                    headers["Access-Control-Expose-Headers"] = "*"
+                    
+                    flow.response = http.Response.make(response.status_code, response.content, headers)
+                    print("[+] 브라우저 모의 포털로 데이터 릴레이 완료.")
+                    print("="*60 + "\n")
+                except Exception as e:
+                    print(f"[ERROR] INBOUND API 연동 실패: {e}")
+                    flow.response = http.Response.make(502, b"Gateway Error", {"Content-Type": "text/plain"})
+                    print("="*60 + "\n")
+                return
+
+        # ─────────────────────────────────────────────────
+        # [일반 웹 서핑] 관제 통제 규칙 (기존 유지)
+        # ─────────────────────────────────────────────────
+        content_type = flow.request.headers.get("content-type", "").lower()
+        client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else "127.0.0.1"
         if self.is_internal(client_ip) and any(mime in content_type for mime in IMAGE_MIMES):
-            print(f"[*] Outbound 데이터 전송 탐지 (Origin: {client_ip}) -> 게이트웨이 검사 시동")
             self._process(flow, direction="OUTBOUND")
 
     def response(self, flow: http.HTTPFlow):
-        """
-        [INBOUND 통제] 외부에서 내부망 사용자로 이미지 다운로드/렌더링(반입) 시 가로채기
-        """
-        if not flow.response:
+        if not flow.response or "external-mail-server.local" in flow.request.pretty_host:
             return
-
         content_type = flow.response.headers.get("content-type", "").lower()
-
-        # 외부에서 유입되는 트래픽 중 이미지 소스가 감지되면 무해화 파이프라인 가동
         if any(mime in content_type for mime in IMAGE_MIMES):
             self._process(flow, direction="INBOUND")
 
     def _process(self, flow: http.HTTPFlow, direction: str):
-        """
-        양방향 공통 처리 코어 파이프라인
-        """
         try:
-            # 1. 방향성에 따른 이미지 스트림 원본 자산 추출
-            if direction == "OUTBOUND":
-                raw = flow.request.content
-                filename = "outbound_leak_attempt.png"
-            else:
-                raw = flow.response.content
-                filename = "inbound_intrusion_attempt.png"
+            raw = flow.request.content if direction == "OUTBOUND" else flow.response.content
+            if not raw: return
 
-            if not raw:
-                return
-
-            # 2. 고도화된 api.py 규격에 맞춰 multipart/form-data 요청 전송
             response = requests.post(
                 API_URL,
-                files={"file": (filename, raw, "image/png")},
-                data={"direction": direction},  # 수정한 api.py가 수신하는 Form 파라미터
-                timeout=5.0                     # 인라인 가용성을 위한 5초 타임아웃
+                files={"file": ("proxy_stream.png", raw, "image/png")},
+                data={"direction": direction},
+                timeout=5.0,
+                proxies={"http": None, "https": None}
             )
 
-            # 3. [정상 처리 완료] 무해화된 바이너리로 교체 및 메타데이터 헤더 주입
             if response.status_code == 200:
-                sanitized = response.content
+                if direction == "OUTBOUND": flow.request.content = response.content
+                else: flow.response.content = response.content
 
-                # 백엔드가 응답 헤더에 심어준 탐지 및 통계 지표 추출
-                verdict = response.headers.get("X-Gateway-Verdict", "UNKNOWN")
-                risk = response.headers.get("X-Gateway-Risk-Level", "UNKNOWN")
-                prob = response.headers.get("X-Gateway-Stego-Prob", "0.0%")
+                for k, v in response.headers.items():
+                    if k.lower().startswith("x-gateway-"):
+                        if direction == "OUTBOUND": flow.request.headers[k] = v
+                        else: flow.response.headers[k] = v
+            elif response.status_code in (400, 403):
+                html = "<html><body><h1 style='color:red;'>403 Forbidden</h1></body></html>".encode('utf-8')
+                flow.response = http.Response.make(403, html, {"Content-Type": "text/html"})
+        except Exception as e:
+            pass
 
-                if direction == "OUTBOUND":
-                    flow.request.content = sanitized
-                    # 아웃바운드는 요청 헤더를 변조하여 전송
-                    flow.request.headers["X-Gateway-Verdict"] = verdict
-                    flow.request.headers["X-Gateway-Risk-Level"] = risk
-                else:
-                    flow.response.content = sanitized
-                    # 인바운드는 브라우저가 인지하도록 응답 헤더를 변조
-                    flow.response.headers["X-Gateway-Verdict"] = verdict
-                    flow.response.headers["X-Gateway-Risk-Level"] = risk
-                    flow.response.headers["X-Gateway-Stego-Prob"] = prob
-
-                print(f"[{direction}] 처리 완료 | 결과: {verdict} ({prob}) | 위험도: {risk}")
-
-            # 4. [정책 위함 발견] 확장자 위장 등 MIME 가드 위반 시 물리적 강제 차단
-            elif response.status_code == 400:
-                print(f"[-] [{direction}] 보안 정책 위반(MIME 차단) 조건 발동 -> 차단 스크립트 강제 사출")
-                
-                # 보안 관제용 HTML 403 Forbidden Response 동적 주입 (양방향 동일 적용)
-                flow.response = http.Response.make(
-                    403,
-                    (
-                        b"<html><head><meta charset='utf-8'>"
-                        b"<title>403 Forbidden - Security Blocked</title></head>"
-                        b"<body style='font-family:sans-serif; text-align:center; padding-top:100px; background-color:#fafafa;'>"
-                        b"<div style='display:inline-block; border:2px solid #dc3545; padding:40px; background:#fff; border-radius:8px; box-shadow:0 4px 6px rgba(0,0,0,0.1);'>"
-                        b"<h1 style='color:#dc3545; margin-top:0;'>[!] Access Denied (403 Forbidden)</h1>"
-                        b"<p style='font-size:16px; color:#333; font-weight:bold;'>보안 정책 위반 파일이 탐지되어 게이트웨이에서 연결을 강제 통제했습니다.</p>"
-                        b"<p style='color:#666; font-size:14px;'>대상 자산은 격리(Quarantine) 조치되었으며, 감사 로그에 영구 기록되었습니다.</p>"
-                        b"<hr style='border:0; border-top:1px solid #eee; margin:20px 0;'>"
-                        b"<p style='font-size:12px; color:#999;'>/etc/friends Integrated Security Pipeline Enterprise v1.0</p>"
-                        b"</div></body></html>"
-                    ),
-                    {"Content-Type": "text/html"}
-                )
-
-        except requests.exceptions.RequestException as e:
-            # 백엔드 가동 불능 시 전체 네트워크 다운을 막는 Fail-Open 전략 이식
-            print(f"[ERROR] [Fail-Open 활성화] 게이트웨이 코어 연동 실패: {e}")
-
-
-# mitmproxy 애드온 등록
 addons = [SteganoCDRAddon()]

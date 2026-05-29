@@ -14,7 +14,7 @@ from datetime import datetime
 # ─────────────────────────────────────────────────
 # 경로 및 API 설정 (MSA 아키텍처 반영)
 # ─────────────────────────────────────────────────
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+API_BASE = os.getenv("API_BASE", "http://api-gateway:8000")
 
 # 4_Local_Workspace 공용 저장소 경로 동적 매핑
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -434,7 +434,7 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # [경로 수정 핵심] 4_Local_Workspace 저장소를 직접 참조하도록 수정
+                    # 4_Local_Workspace 저장소 참조
                     file_id = result.get("file_id")
                     sanitized_files = list(WORKSPACE_SANITIZED.glob(f"{file_id}_*")) if file_id else []
                     if sanitized_files:
