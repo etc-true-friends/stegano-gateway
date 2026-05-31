@@ -1,0 +1,11 @@
+fastapi>=0.100.0
+uvicorn>=0.20.0
+python-magic-bin>=0.4.14; sys_platform == 'win32'
+python-magic>=0.4.27; sys_platform != 'win32'
+torch>=2.0.0
+torchvision>=0.15.0
+pillow>=9.0.0
+numpy>=1.23.0
+slowapi>=0.1.9
+opencv-python-headless
+python-multipart

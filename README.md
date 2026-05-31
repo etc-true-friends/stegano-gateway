@@ -4,7 +4,7 @@
 > 구름 정보보호 부트캠프 17기 파이널 프로젝트 — /etc/true/friends
 
 <p>
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
   <img src="https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit">
@@ -124,7 +124,7 @@ Step 5: SQLite3 감사 로그 영구 보존
 
 ### 요구 사항
 
-- Python 3.10+
+- Python 3.12+
 - CUDA (선택, CPU도 동작)
 - 모델 가중치: `best_srnet_finetuned.pt`
 

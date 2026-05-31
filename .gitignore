@@ -40,3 +40,9 @@ quarantine/
 !4_Local_Workspace/
 !4_Local_Workspace/checkpoints/
 !4_Local_Workspace/checkpoints/*.pt
+4_Local_Workspace/dataset_finetune/
+4_Local_Workspace/dataset_real/
+4_Local_Workspace/dataset_simple_lsb/
+4_Local_Workspace/real_images/
+4_Local_Workspace/test_images/
+4_Local_Workspace/stegano_audit.db
