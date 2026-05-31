@@ -18,4 +18,4 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           script: |
             cd ~/stegano-gateway
-            ./deploy.shGet-Content D:\project5\.ssh\stegano-key.pem -Raw
+            ./deploy.sh
