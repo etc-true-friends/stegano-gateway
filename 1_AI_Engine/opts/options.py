@@ -26,5 +26,8 @@ def arguments():
     # 5. 학습률(Learning Rate)
     parser.add_argument("--lr", type=float, default=0.001)
 
+    # 6. 체크포인트 설정용
+    parser.add_argument("--resume_epoch", type=int, default=None)
+    
     opt = parser.parse_args()
     return opt
