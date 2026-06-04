@@ -22,8 +22,8 @@ from stegano import lsb as stegano_lsb
 # ---------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------
-REAL_DIR     = Path(r"D:\final_project\real_images")
-DATASET_DIR  = Path(r"D:\final_project\dataset_real")
+REAL_DIR     = Path(r"real_images")
+DATASET_DIR  = Path(r"dataset_real")
 IMG_SIZE     = 256
 TRAIN_RATIO  = 0.8
 SEED         = 42
