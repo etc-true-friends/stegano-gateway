@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
     os.makedirs(opt.checkpoints_dir, exist_ok=True)
 
-    check_point = latest_checkpoint(opt.checkpoints_dir)
+    check_point = opt.resume_epoch if opt.resume_epoch is not None else latest_checkpoint(opt.checkpoints_dir)
     best_model_path = os.path.join(opt.checkpoints_dir, "best_srnet_model.pt")
     best_valid_loss = float("inf")
 
