@@ -1,6 +1,8 @@
 torch
 torchvision
+
 numpy
+pandas
 pillow
 opencv-python
 scikit-image
@@ -8,10 +10,23 @@ scikit-learn
 scipy
 matplotlib
 tqdm
+
 stegano
+piexif
+imageio
+tifffile
+
 fastapi
 uvicorn
 python-multipart
+slowapi
+streamlit
+
+pydantic
+typing_extensions
+
+h5py
+hdf5storage
+
 python-magic-bin; sys_platform == "win32"
 python-magic; sys_platform != "win32"
-streamlit
