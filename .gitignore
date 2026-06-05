@@ -11,6 +11,7 @@ __pycache__/
 # 2. 가상환경 및 환경변수
 # =========================
 venv/
+.venv/
 .env
 
 # =========================
@@ -46,3 +47,11 @@ quarantine/
 4_Local_Workspace/real_images/
 4_Local_Workspace/test_images/
 4_Local_Workspace/stegano_audit.db
+
+# =========================
+# 6. React 대시보드
+# =========================
+3_Web_Dashboard/react-dashboard/node_modules/
+3_Web_Dashboard/react-dashboard/dist/
+3_Web_Dashboard/react-dashboard/.env
+3_Web_Dashboard/react-dashboard/.env.local

@@ -1,0 +1,62 @@
+// 더미 데이터 — 나중에 실제 API 연동 시 이 파일은 사용 안 함
+// useAuditLog.js 에서 API 실패 시 자동으로 이 데이터를 사용
+
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function isoTimestamp(minutesAgo) {
+  const d = new Date(Date.now() - minutesAgo * 60 * 1000);
+  return d.toISOString();
+}
+
+const FILE_NAMES = [
+  'photo_vacation.png',
+  'report_final.jpg',
+  'invoice_2024.png',
+  'profile_pic.jpeg',
+  'scan_doc001.bmp',
+  'logo_design.png',
+  'screenshot_01.png',
+  'attachment_img.webp',
+  'id_card_copy.jpg',
+  'contract_signed.png',
+  'budget_chart.png',
+  'meeting_notes.jpeg',
+  'product_photo.webp',
+  'badge_icon.png',
+  'receipt_upload.jpg',
+];
+
+const ACTIONS = ['sanitized', 'quarantined', 'passed', 'sanitized', 'sanitized'];
+
+function makeLog(minutesAgo) {
+  const prob = parseFloat((Math.random() * 100).toFixed(1));
+  const risk_level = prob >= 70 ? 'HIGH' : prob >= 40 ? 'MEDIUM' : 'LOW';
+  const verdict = prob >= 50 ? 'SUSPICIOUS' : 'CLEAN';
+  return {
+    timestamp: isoTimestamp(minutesAgo),
+    original_name: FILE_NAMES[randomBetween(0, FILE_NAMES.length - 1)],
+    stego_probability: prob,
+    risk_level,
+    verdict,
+    action: verdict === 'SUSPICIOUS' ? (prob >= 70 ? 'quarantined' : 'sanitized') : 'passed',
+  };
+}
+
+// 최근 60분 동안 30건 생성
+export const MOCK_LOGS = Array.from({ length: 30 }, (_, i) =>
+  makeLog(randomBetween(i * 2, i * 2 + 2))
+).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+export const MOCK_AUDIT = {
+  total_count: MOCK_LOGS.length,
+  suspicious_count: MOCK_LOGS.filter(l => l.verdict === 'SUSPICIOUS').length,
+  logs: MOCK_LOGS,
+};
+
+export const MOCK_SYS_INFO = {
+  ai_model: 'StegoDetector-v2',
+  device: 'CPU',
+  version: '2.7.4 (mock)',
+};
