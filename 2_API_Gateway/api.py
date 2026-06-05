@@ -381,7 +381,7 @@ async def portal():
 
 <script>
 const PROXY_TARGET_OUTBOUND = 'http://external-mail-server.local/api/v1/upload';
-const PROXY_TARGET_INBOUND = 'http://external-mail-server.local/api/v1/download';
+const PROXY_TARGET_OUTBOUND = 'http://3.88.139.96:8000/scan';
 
 async function handleOutbound(input) {
   const file = input.files[0];
