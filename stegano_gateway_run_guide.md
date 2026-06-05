@@ -622,3 +622,377 @@ python train.py ^
 
 예를 들어 `net_7.pt`에서 `--num_epochs 20`을 주면 `8 epoch`부터 `20 epoch`까지 학습한다.
 
+
+---
+
+## 추가 stego 생성 스크립트 명령어
+
+아래 스크립트들은 프로젝트 루트의 `scripts` 폴더에 넣고 실행합니다.
+
+```text
+scripts/
+├─ build_aes_random_lsb_stego.py
+├─ build_edge_adaptive_lsb_stego.py
+├─ build_texture_adaptive_lsb_stego.py
+├─ build_alpha_lsb_stego.py
+├─ build_channel_lsb_stego.py
+└─ build_watermark_stego.py
+```
+
+AES + Random LSB 스크립트를 사용하려면 `requirements.txt`에 아래 항목을 추가합니다.
+
+```txt
+cryptography
+```
+
+또는 직접 설치합니다.
+
+```bat
+pip install cryptography
+```
+
+---
+
+## 추가 기법 폴더 생성
+
+프로젝트 루트에서 실행합니다.
+
+```bat
+mkdir 4_Local_Workspace\datasets\aes_random_lsb\train\cover
+mkdir 4_Local_Workspace\datasets\aes_random_lsb\train\stego
+mkdir 4_Local_Workspace\datasets\aes_random_lsb\val\cover
+mkdir 4_Local_Workspace\datasets\aes_random_lsb\val\stego
+mkdir 4_Local_Workspace\checkpoints\aes_random_lsb
+
+mkdir 4_Local_Workspace\datasets\edge_adaptive_lsb\train\cover
+mkdir 4_Local_Workspace\datasets\edge_adaptive_lsb\train\stego
+mkdir 4_Local_Workspace\datasets\edge_adaptive_lsb\val\cover
+mkdir 4_Local_Workspace\datasets\edge_adaptive_lsb\val\stego
+mkdir 4_Local_Workspace\checkpoints\edge_adaptive_lsb
+
+mkdir 4_Local_Workspace\datasets\texture_adaptive_lsb\train\cover
+mkdir 4_Local_Workspace\datasets\texture_adaptive_lsb\train\stego
+mkdir 4_Local_Workspace\datasets\texture_adaptive_lsb\val\cover
+mkdir 4_Local_Workspace\datasets\texture_adaptive_lsb\val\stego
+mkdir 4_Local_Workspace\checkpoints\texture_adaptive_lsb
+
+mkdir 4_Local_Workspace\datasets\alpha_lsb\train\cover
+mkdir 4_Local_Workspace\datasets\alpha_lsb\train\stego
+mkdir 4_Local_Workspace\datasets\alpha_lsb\val\cover
+mkdir 4_Local_Workspace\datasets\alpha_lsb\val\stego
+mkdir 4_Local_Workspace\checkpoints\alpha_lsb
+
+mkdir 4_Local_Workspace\datasets\channel_lsb_b\train\cover
+mkdir 4_Local_Workspace\datasets\channel_lsb_b\train\stego
+mkdir 4_Local_Workspace\datasets\channel_lsb_b\val\cover
+mkdir 4_Local_Workspace\datasets\channel_lsb_b\val\stego
+mkdir 4_Local_Workspace\checkpoints\channel_lsb_b
+
+mkdir 4_Local_Workspace\datasets\watermark\train\cover
+mkdir 4_Local_Workspace\datasets\watermark\train\stego
+mkdir 4_Local_Workspace\datasets\watermark\val\cover
+mkdir 4_Local_Workspace\datasets\watermark\val\stego
+mkdir 4_Local_Workspace\checkpoints\watermark
+```
+
+---
+
+## 추가 기법 cover 생성
+
+아래 명령어에서 `기법명`만 바꿔서 실행합니다.
+
+```bat
+python scripts\build_cover_256.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\기법명\train\cover" ^
+  --size 256
+
+python scripts\build_cover_256.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\기법명\val\cover" ^
+  --size 256
+```
+
+사용 가능한 `기법명`:
+
+```text
+aes_random_lsb
+edge_adaptive_lsb
+texture_adaptive_lsb
+alpha_lsb
+channel_lsb_b
+watermark
+```
+
+---
+
+## AES + Random LSB stego 생성
+
+```bat
+python scripts\build_aes_random_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\aes_random_lsb\train\stego" ^
+  --size 256 ^
+  --payload_bytes 2048 ^
+  --password "stegano-training"
+
+python scripts\build_aes_random_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\aes_random_lsb\val\stego" ^
+  --size 256 ^
+  --payload_bytes 2048 ^
+  --password "stegano-training"
+```
+
+---
+
+## Edge Adaptive LSB stego 생성
+
+```bat
+python scripts\build_edge_adaptive_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\edge_adaptive_lsb\train\stego" ^
+  --size 256 ^
+  --payload_ratio 0.7 ^
+  --channel random
+
+python scripts\build_edge_adaptive_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\edge_adaptive_lsb\val\stego" ^
+  --size 256 ^
+  --payload_ratio 0.7 ^
+  --channel random
+```
+
+---
+
+## Texture Adaptive LSB stego 생성
+
+```bat
+python scripts\build_texture_adaptive_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\texture_adaptive_lsb\train\stego" ^
+  --size 256 ^
+  --payload_ratio 0.6 ^
+  --percentile 65 ^
+  --channel random
+
+python scripts\build_texture_adaptive_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\texture_adaptive_lsb\val\stego" ^
+  --size 256 ^
+  --payload_ratio 0.6 ^
+  --percentile 65 ^
+  --channel random
+```
+
+---
+
+## Alpha Channel LSB stego 생성
+
+```bat
+python scripts\build_alpha_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\alpha_lsb\train\stego" ^
+  --size 256 ^
+  --payload_ratio 0.5
+
+python scripts\build_alpha_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\alpha_lsb\val\stego" ^
+  --size 256 ^
+  --payload_ratio 0.5
+```
+
+---
+
+## 특정 채널 LSB stego 생성
+
+아래 예시는 B 채널 기준입니다.
+
+```bat
+python scripts\build_channel_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\channel_lsb_b\train\stego" ^
+  --size 256 ^
+  --channel b ^
+  --payload_ratio 0.7
+
+python scripts\build_channel_lsb_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\channel_lsb_b\val\stego" ^
+  --size 256 ^
+  --channel b ^
+  --payload_ratio 0.7
+```
+
+R/G 채널을 만들려면 폴더명과 `--channel` 값을 바꿉니다.
+
+```text
+--channel r
+--channel g
+--channel b
+```
+
+---
+
+## 워터마크형 은닉 stego 생성
+
+```bat
+python scripts\build_watermark_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\train" ^
+  --output_dir ".\4_Local_Workspace\datasets\watermark\train\stego" ^
+  --size 256 ^
+  --strength 2 ^
+  --density 0.25
+
+python scripts\build_watermark_stego.py ^
+  --input_dir ".\4_Local_Workspace\raw_images\val" ^
+  --output_dir ".\4_Local_Workspace\datasets\watermark\val\stego" ^
+  --size 256 ^
+  --strength 2 ^
+  --density 0.25
+```
+
+---
+
+## 추가 기법 학습 명령어
+
+`1_AI_Engine` 폴더에서 실행합니다.
+
+### AES + Random LSB
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\aes_random_lsb\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\aes_random_lsb\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\aes_random_lsb\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\aes_random_lsb\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\aes_random_lsb" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+### Edge Adaptive LSB
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\edge_adaptive_lsb" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+### Texture Adaptive LSB
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\texture_adaptive_lsb\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\texture_adaptive_lsb\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\texture_adaptive_lsb\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\texture_adaptive_lsb\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\texture_adaptive_lsb" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+### Alpha Channel LSB
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\alpha_lsb\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\alpha_lsb\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\alpha_lsb\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\alpha_lsb\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\alpha_lsb" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+### 특정 채널 LSB
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\channel_lsb_b\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\channel_lsb_b\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\channel_lsb_b\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\channel_lsb_b\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\channel_lsb_b" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+### 워터마크형 은닉
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\watermark\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\watermark\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\watermark\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\watermark\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\watermark" ^
+  --batch_size 4 ^
+  --num_epochs 10 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
+---
+
+## 추가 기법 배치 테스트
+
+`1_AI_Engine` 폴더에서 실행합니다. 아래 명령어에서 `기법명`만 바꿉니다.
+
+```bat
+python batch_test.py ^
+  --checkpoint_path "..\4_Local_Workspace\checkpoints\기법명\best_srnet_model.pt" ^
+  --cover_glob "..\4_Local_Workspace\datasets\기법명\val\cover\*.png" ^
+  --stego_glob "..\4_Local_Workspace\datasets\기법명\val\stego\*.png" ^
+  --batch_size 40
+```
+
+사용 가능한 `기법명`:
+
+```text
+aes_random_lsb
+edge_adaptive_lsb
+texture_adaptive_lsb
+alpha_lsb
+channel_lsb_b
+watermark
+```
+
+---
+
+## 추가 기법 이어학습
+
+같은 `--checkpoints_dir`를 유지하고 `--num_epochs`만 늘립니다.
+
+예시:
+
+```bat
+python train.py ^
+  --cover_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\train\cover" ^
+  --stego_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\train\stego" ^
+  --valid_cover_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\val\cover" ^
+  --valid_stego_path "..\4_Local_Workspace\datasets\edge_adaptive_lsb\val\stego" ^
+  --checkpoints_dir "..\4_Local_Workspace\checkpoints\edge_adaptive_lsb" ^
+  --batch_size 4 ^
+  --num_epochs 20 ^
+  --train_size 3345 ^
+  --val_size 715
+```
+
