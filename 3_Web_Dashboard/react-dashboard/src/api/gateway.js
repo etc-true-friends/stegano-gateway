@@ -15,10 +15,20 @@ export async function fetchAuditLog() {
 }
 
 export async function scanFile(file) {
-  const form = new FormData();
-  form.append('file', file);
-  const { data } = await api.post('/scan', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
+    const form = new FormData();
+    form.append('file', file);
+
+    const response = await api.post('/scan', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob',
+    });
+
+    return {
+        verdict: response.headers['x-gateway-verdict'],
+        riskLevel: response.headers['x-gateway-risk-level'],
+        stegoProb: response.headers['x-gateway-stego-prob'],
+        fileId: response.headers['x-gateway-file-id'],
+        blob: response.data,
+        downloadUrl: URL.createObjectURL(response.data),
+    };
 }
