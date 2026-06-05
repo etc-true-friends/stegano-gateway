@@ -19,6 +19,7 @@ from opts.options import arguments
 from model.model import Srnet
 from utils.utils import (
     latest_checkpoint,
+    saver,
     weights_init,
 )
 
@@ -34,10 +35,9 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 if __name__ == "__main__":
 
-    # [완벽 수정] 절대 경로 고정 및 불필요한 인자 제거 완료
     train_data = dataset.DatasetLoad(
-        cover_path=r"D:\final_project\dataset_real\train\cover",
-        stego_path=r"D:\final_project\dataset_real\train\stego",
+        cover_path=opt.cover_path,
+        stego_path=opt.stego_path,
         size=opt.train_size,
         transform=transforms.Compose([
             transforms.ToTensor(),
@@ -45,11 +45,21 @@ if __name__ == "__main__":
     )
 
     val_data = dataset.DatasetLoad(
-        cover_path=r"D:\final_project\dataset_real\val\cover",
-        stego_path=r"D:\final_project\dataset_real\val\stego",
+        cover_path=opt.valid_cover_path,
+        stego_path=opt.valid_stego_path,
         size=opt.val_size,
         transform=transforms.ToTensor(),
     )
+
+    if len(train_data) == 0:
+        print("[-] 학습 가능한 train cover/stego 쌍이 없습니다. 파일명과 경로를 확인하세요.")
+        sys.exit(1)
+
+    if len(val_data) == 0:
+        print("[-] 학습 가능한 validation cover/stego 쌍이 없습니다. 파일명과 경로를 확인하세요.")
+        sys.exit(1)
+
+    print(f"[+] Train pairs: {len(train_data)}, Validation pairs: {len(val_data)}")
 
     # Creating training and validation loader.
     train_loader = DataLoader(
@@ -91,22 +101,33 @@ if __name__ == "__main__":
         gamma=0.1
     )
 
-    check_point = latest_checkpoint()
+    os.makedirs(opt.checkpoints_dir, exist_ok=True)
+
+    check_point = opt.resume_epoch if opt.resume_epoch is not None else latest_checkpoint(opt.checkpoints_dir)
+    best_model_path = os.path.join(opt.checkpoints_dir, "best_srnet_model.pt")
+    best_valid_loss = float("inf")
+
     if not check_point:
         START_EPOCH = 1
-        if not os.path.exists(opt.checkpoints_dir):
-            os.makedirs(opt.checkpoints_dir)
-        print("No checkpoints found!!, Retraining started... ")
+        print("No checkpoints found!!, Training started... ")
     else:
-        pth = opt.checkpoints_dir + "net_" + str(check_point) + ".pt"
-        ckpt = torch.load(pth, weights_only=False)
+        pth = os.path.join(opt.checkpoints_dir, f"net_{check_point}.pt")
+        ckpt = torch.load(pth, map_location=device, weights_only=False)
         START_EPOCH = ckpt["epoch"] + 1
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        print("Model Loaded from epoch " + str(START_EPOCH) + "..")
+        if "scheduler_state_dict" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        best_valid_loss = ckpt.get("best_valid_loss", ckpt.get("valid_loss", float("inf")))
+        print(f"Model loaded from epoch {ckpt['epoch']}. Next epoch: {START_EPOCH}")
 
-    # 베스트 모델 판별을 위한 기준 변수 선언
-    best_valid_loss = float('inf')
+    if START_EPOCH > opt.num_epochs:
+        print(f"Already trained through epoch {START_EPOCH - 1}. Increase --num_epochs to continue training.")
+        sys.exit(0)
+
+    if os.path.exists(best_model_path):
+        best_ckpt = torch.load(best_model_path, map_location=device, weights_only=False)
+        best_valid_loss = min(best_valid_loss, best_ckpt.get("best_valid_loss", best_ckpt.get("valid_loss", float("inf"))))
 
     for epoch in range(START_EPOCH, opt.num_epochs + 1):
         training_loss = []
@@ -185,6 +206,9 @@ if __name__ == "__main__":
         print("\n", message)
         logging.info(message)
 
+        # 에폭 종료 후 스케줄러를 먼저 갱신한 뒤 체크포인트에 저장
+        scheduler.step()
+
         state = {
             "epoch": epoch,
             "opt": opt,
@@ -194,16 +218,18 @@ if __name__ == "__main__":
             "valid_accuracy": avg_valid_acc,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "best_valid_loss": min(best_valid_loss, avg_valid_loss),
             "lr": optimizer.param_groups[0]["lr"],
         }
 
-        # [과적합 방어막 3] 무지성 저장 금지! Valid Loss 최저치일 때만 'best' 모델 1개 덮어쓰기 저장
+        saver(state, opt.checkpoints_dir, epoch)
+        print(f" Checkpoint saved -> {os.path.join(opt.checkpoints_dir, f'net_{epoch}.pt')}")
+
         if avg_valid_loss < best_valid_loss:
             best_valid_loss = avg_valid_loss
-            best_model_path = os.path.join(opt.checkpoints_dir, "best_srnet_model.pt")
+            state["best_valid_loss"] = best_valid_loss
             torch.save(state, best_model_path)
             print(f" [BEST] Valid Loss 갱신! 베스트 모델 저장 완료 -> {best_model_path}")
             logging.info("Best model saved.")
 
-        # 에폭 끝난 후 스케줄러 스텝 진행
-        scheduler.step()
