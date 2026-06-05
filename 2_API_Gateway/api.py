@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import imghdr
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 import torch
@@ -240,7 +241,7 @@ async def scan_and_sanitize(
             except:
                 pass
 
-        timestamp_str = datetime.now().isoformat()
+        timestamp_str = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
