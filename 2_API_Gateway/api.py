@@ -380,7 +380,6 @@ async def portal():
 </div>
 
 <script>
-const PROXY_TARGET_OUTBOUND = 'http://external-mail-server.local/api/v1/upload';
 const PROXY_TARGET_OUTBOUND = 'http://3.88.139.96:8000/scan';
 
 async function handleOutbound(input) {
