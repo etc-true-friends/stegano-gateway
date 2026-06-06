@@ -1,11 +1,14 @@
-import { Shield, RefreshCw, FlaskConical } from 'lucide-react';
+import { RefreshCw, FlaskConical } from 'lucide-react';
+import mascot from '../../assets/mascot.png';
 
 export default function Navbar({ online, usingMock, onRefresh }) {
   return (
     <header className="navbar">
       <div className="navbar-brand">
-        <Shield size={18} className="brand-icon" />
-        <span className="brand-team">/etc/friends</span>
+        <img src={mascot} alt="mascot" style={{ width: 80, height: 80, objectFit: 'contain' }} />
+        <span className="brand-team">
+          /etc/friends<span className="cursor"></span>
+        </span>
         <span className="brand-divider">·</span>
         <span className="brand-title">스테가노그래피 탐지 관제</span>
       </div>
