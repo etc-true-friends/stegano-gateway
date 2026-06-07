@@ -17,6 +17,7 @@ import imghdr
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 import torch
 
@@ -31,6 +32,12 @@ from model.model import Srnet
 from cdr_sanitizer import CDRSanitizer
 
 app = FastAPI(title="/etc/friends Integrated Security Pipeline (In-Line Enhanced)")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 디렉토리 아키텍처 정의 및 생성
 WORKSPACE_DIR = os.path.join(BASE_DIR, "4_Local_Workspace")
