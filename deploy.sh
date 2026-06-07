@@ -4,7 +4,6 @@ set -e
 cd ~/stegano-gateway
 
 git fetch origin
-git checkout main
 git reset --hard origin/main
 
 docker compose down
