@@ -18,4 +18,6 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           script: |
             cd ~/stegano-gateway
-            ./deploy.sh
+            git fetch origin
+            git reset --hard origin/main
+            bash deploy.sh
