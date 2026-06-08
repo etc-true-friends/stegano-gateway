@@ -12,6 +12,7 @@ services:
       - ./4_Local_Workspace:/4_Local_Workspace
     environment:
       - PYTHONUNBUFFERED=1
+      - S3_BUCKET=stegano-gateway-storage-537124976047-us-east-1-an
     restart: always
 
   mitmproxy:
