@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 import torch
+import boto3
 
 # MSA 구조 경로 인식 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +32,8 @@ from model.model import Srnet
 from cdr_sanitizer import CDRSanitizer
 
 app = FastAPI(title="/etc/friends Integrated Security Pipeline (In-Line Enhanced)")
+S3_BUCKET = os.getenv("S3_BUCKET")
+s3 = boto3.client("s3")
 
 # 디렉토리 아키텍처 정의 및 생성
 WORKSPACE_DIR = os.path.join(BASE_DIR, "4_Local_Workspace")
@@ -193,9 +196,18 @@ async def scan_and_sanitize(
     original_ext = os.path.splitext(file.filename)[1] if file.filename else ".png"
     input_filename = f"{file_id}_{file.filename or 'stream'}{original_ext}"
     input_path = os.path.join(UPLOAD_DIR, input_filename)
-    
+
     with open(input_path, "wb") as f:
         f.write(contents)
+
+    try:
+        s3.upload_file(
+            input_path,
+            S3_BUCKET,
+            f"uploads/{input_filename}"
+        )
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
 
     action = "BYPASS"
     try:
@@ -231,11 +243,30 @@ async def scan_and_sanitize(
 
         output_filename = f"{file_id}_sanitized.jpg"
         output_path = os.path.join(SANITIZED_DIR, output_filename)
+
         cdr_info = sanitizer.sanitize(input_path, output_path)
+        try:
+            s3.upload_file(
+                output_path,
+                S3_BUCKET,
+                f"sanitized/{output_filename}"
+            )
+        except Exception as e:
+            print(f"S3 Upload Failed: {e}")
 
         if action == "QUARANTINE":
             quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
+
             shutil.move(input_path, quarantine_path)
+            try:
+                s3.upload_file(
+                    quarantine_path,
+                    S3_BUCKET,
+                    f"quarantine/{input_filename}"
+                )
+            except Exception as e:
+                print(f"S3 Upload Failed: {e}")
+
             try:
                 os.chmod(quarantine_path, 0o440)
             except:
