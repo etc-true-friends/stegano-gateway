@@ -17,6 +17,7 @@ import imghdr
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 import torch
 import boto3
@@ -32,6 +33,14 @@ from model.model import Srnet
 from cdr_sanitizer import CDRSanitizer
 
 app = FastAPI(title="/etc/friends Integrated Security Pipeline (In-Line Enhanced)")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 S3_BUCKET = os.getenv("S3_BUCKET")
 s3 = boto3.client("s3")
 
