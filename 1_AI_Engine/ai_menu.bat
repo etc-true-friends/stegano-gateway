@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
+
 set "AI_DIR=%~dp0"
 for %%I in ("%AI_DIR%..") do set "ROOT=%%~fI"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
@@ -28,13 +29,18 @@ echo 10. ensemble val test
 echo 11. export all best models
 echo 12. exit
 echo.
-set /p SEL=Select: 
+set "SEL="
+set /p "SEL=Select: "
+
 if "%SEL%"=="12" exit /b 0
 if "%SEL%"=="9" call :ensemble_predict & goto wait_main
 if "%SEL%"=="10" call :ensemble_batch & goto wait_main
 if "%SEL%"=="11" "%PY%" export_best_models.py --all & goto wait_main
+
 call :set_dataset "%SEL%"
 if errorlevel 1 goto main
+
+goto action
 
 :action
 cls
@@ -49,13 +55,16 @@ echo 4. single image test
 echo 5. export best model to 4_Local_Workspace\models
 echo 6. back
 echo.
-set /p ACT=Action: 
+set "ACT="
+set /p "ACT=Action: "
+
 if "%ACT%"=="6" goto main
 if "%ACT%"=="1" call :train_new & goto wait_action
 if "%ACT%"=="2" call :train_resume & goto wait_action
 if "%ACT%"=="3" call :batch_test & goto wait_action
 if "%ACT%"=="4" call :single_test & goto wait_action
 if "%ACT%"=="5" "%PY%" export_best_models.py --method "!LABEL!" & goto wait_action
+
 goto action
 
 :wait_action
@@ -86,34 +95,41 @@ set "DATASET_DIR=%WS%\%KEY%"
 set "CHECKPOINTS_DIR=%WS%\%CK%"
 exit /b 0
 
-:count_images
-set "COUNT=%~1"
-set "DIR=%~2"
-for /f %%C in ('powershell -NoProfile -Command "if(Test-Path '%~2'){(Get-ChildItem -Path '%~2' -File -Include *.png,*.jpg,*.jpeg,*.bmp,*.webp -Recurse).Count}else{0}"') do set "%~1=%%C"
-exit /b 0
-
 :read_params
-call :count_images TRAIN_COUNT "!DATASET_DIR!\train\cover"
-call :count_images VAL_COUNT "!DATASET_DIR!\val\cover"
-if "!TRAIN_COUNT!"=="0" echo No train cover images found.&exit /b 1
-if "!VAL_COUNT!"=="0" echo No val cover images found.&exit /b 1
-set /p EPOCHS=Epochs Enter=30: 
+if not exist "!DATASET_DIR!\train\cover" echo Missing folder: !DATASET_DIR!\train\cover&exit /b 1
+if not exist "!DATASET_DIR!\train\stego" echo Missing folder: !DATASET_DIR!\train\stego&exit /b 1
+if not exist "!DATASET_DIR!\val\cover" echo Missing folder: !DATASET_DIR!\val\cover&exit /b 1
+if not exist "!DATASET_DIR!\val\stego" echo Missing folder: !DATASET_DIR!\val\stego&exit /b 1
+set "TRAIN_COUNT="
+set /p "TRAIN_COUNT=Train size Enter=182808: "
+if "!TRAIN_COUNT!"=="" set "TRAIN_COUNT=182808"
+set "VAL_COUNT="
+set /p "VAL_COUNT=Val size Enter=45703: "
+if "!VAL_COUNT!"=="" set "VAL_COUNT=45703"
+set "EPOCHS="
+set /p "EPOCHS=Epochs Enter=30: "
 if "!EPOCHS!"=="" set "EPOCHS=30"
-set /p BATCH=Batch size Enter=16: 
+set "BATCH="
+set /p "BATCH=Batch size Enter=16: "
 if "!BATCH!"=="" set "BATCH=16"
-set /p LR=Learning rate Enter=0.001: 
+set "LR="
+set /p "LR=Learning rate Enter=0.001: "
 if "!LR!"=="" set "LR=0.001"
 exit /b 0
 
 :train_new
+echo.
+echo [RUN] new training
 call :read_params
 if errorlevel 1 exit /b 1
 if exist "!CHECKPOINTS_DIR!" rmdir /s /q "!CHECKPOINTS_DIR!"
-mkdir "!CHECKPOINTS_DIR!"
+mkdir "!CHECKPOINTS_DIR!" 2>nul
 "%PY%" train.py --cover_path "!DATASET_DIR!\train\cover" --stego_path "!DATASET_DIR!\train\stego" --valid_cover_path "!DATASET_DIR!\val\cover" --valid_stego_path "!DATASET_DIR!\val\stego" --checkpoints_dir "!CHECKPOINTS_DIR!" --batch_size !BATCH! --num_epochs !EPOCHS! --train_size !TRAIN_COUNT! --val_size !VAL_COUNT! --lr !LR!
 exit /b %errorlevel%
 
 :train_resume
+echo.
+echo [RUN] resume training
 call :read_params
 if errorlevel 1 exit /b 1
 mkdir "!CHECKPOINTS_DIR!" 2>nul
@@ -129,19 +145,22 @@ exit /b %errorlevel%
 :single_test
 set "MODEL=!CHECKPOINTS_DIR!\best_srnet_model.pt"
 if not exist "!MODEL!" echo Missing model: !MODEL!&exit /b 1
-set /p IMG=Image path: 
+set "IMG="
+set /p "IMG=Image path: "
 if "!IMG!"=="" exit /b 0
 "%PY%" inference_test.py --checkpoint_path "!MODEL!" --img_dir "" --images "!IMG!"
 exit /b %errorlevel%
 
 :ensemble_predict
-set /p IMG=Image path: 
+set "IMG="
+set /p "IMG=Image path: "
 if "%IMG%"=="" exit /b 0
 "%PY%" ensemble_predict.py --image "%IMG%" --models_dir "%WS%\models"
 exit /b %errorlevel%
 
 :ensemble_batch
-set /p DATASET=Dataset folder Enter=dataset: 
+set "DATASET="
+set /p "DATASET=Dataset folder Enter=dataset: "
 if "%DATASET%"=="" set "DATASET=dataset"
 "%PY%" ensemble_batch_test.py --cover_dir "%WS%\%DATASET%\val\cover" --stego_dir "%WS%\%DATASET%\val\stego" --models_dir "%WS%\models" --output_csv "%WS%\ensemble_reports\%DATASET%_ensemble_report.csv"
 exit /b %errorlevel%
