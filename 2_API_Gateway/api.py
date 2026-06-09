@@ -211,7 +211,7 @@ async def scan_and_sanitize(
 
         with torch.no_grad():
             output = model(img_tensor)
-            prob = torch.softmax(output, dim=1)[0]
+            prob = torch.exp(output)[0]
 
         stego_prob_pct = prob[1].item() * 100
         
