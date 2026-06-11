@@ -8,6 +8,7 @@ import ListItemButton from '@mui/joy/ListItemButton';
 import Stack from '@mui/joy/Stack';
 import Typography from '@mui/joy/Typography';
 import CircleIcon from '@mui/icons-material/Circle';
+import MaterialIcon from './MaterialIcon';
 
 export type Email = {
   id: number;
@@ -66,7 +67,9 @@ export default function EmailList({ emails, selectedId, onSelect }: Props) {
                   </Typography>
                 </Box>
                 {email.unread && (
-                  <CircleIcon sx={{ fontSize: 10, color: 'primary.500', mt: 0.5 }} />
+                  <MaterialIcon>
+                    <CircleIcon sx={{ fontSize: 10, color: 'primary.500', mt: 0.5 }} />
+                  </MaterialIcon>
                 )}
               </Stack>
               <Typography

@@ -11,6 +11,7 @@ import ForwardToInboxRoundedIcon from '@mui/icons-material/ForwardToInboxRounded
 import ReplyAllRoundedIcon from '@mui/icons-material/ReplyAllRounded';
 import ReplyRoundedIcon from '@mui/icons-material/ReplyRounded';
 import type { Email } from './EmailList';
+import MaterialIcon from './MaterialIcon';
 
 type Props = {
   email: Email | null;
@@ -48,14 +49,14 @@ export default function EmailContent({ email }: Props) {
       }}
     >
       <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Button variant="plain" color="neutral" size="sm" startDecorator={<ReplyRoundedIcon />}>
+        <Button variant="plain" color="neutral" size="sm" startDecorator={<MaterialIcon><ReplyRoundedIcon /></MaterialIcon>}>
           답장
         </Button>
-<Button variant="plain" color="neutral" size="sm" startDecorator={<ForwardToInboxRoundedIcon />}>
+        <Button variant="plain" color="neutral" size="sm" startDecorator={<MaterialIcon><ForwardToInboxRoundedIcon /></MaterialIcon>}>
           전달
         </Button>
         <Box sx={{ flex: 1 }} />
-        <Button variant="plain" color="danger" size="sm" startDecorator={<DeleteRoundedIcon />}>
+        <Button variant="plain" color="danger" size="sm" startDecorator={<MaterialIcon><DeleteRoundedIcon /></MaterialIcon>}>
           삭제
         </Button>
       </Box>

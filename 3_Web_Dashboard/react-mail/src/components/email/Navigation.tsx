@@ -16,6 +16,8 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { useNavigate, useLocation } from 'react-router-dom';
+import logo from '../../assets/logo.png';
+import MaterialIcon from './MaterialIcon';
 
 export default function Navigation() {
   const navigate = useNavigate();
@@ -50,7 +52,7 @@ export default function Navigation() {
       />
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
         <IconButton variant="soft" color="primary" size="sm">
-          <img src="/logo.png" alt="logo" style={{ width: 20, height: 20 }} />
+          <img src={logo} alt="logo" style={{ width: 60, height: 40 }} />
         </IconButton>
         <Typography level="title-lg">ETC Friends</Typography>
       </Box>
@@ -80,7 +82,7 @@ export default function Navigation() {
               selected={location.pathname === '/inbox'}
               onClick={() => navigate('/inbox')}
             >
-              <InboxRoundedIcon />
+              <MaterialIcon><InboxRoundedIcon /></MaterialIcon>
               <ListItemContent>
                 <Typography level="title-sm">받은 메일함</Typography>
               </ListItemContent>
@@ -96,7 +98,7 @@ export default function Navigation() {
               onClick={() => navigate('/sent')}
               color={location.pathname === '/sent' || location.pathname === '/' ? 'primary' : undefined}
             >
-              <SendRoundedIcon />
+              <MaterialIcon><SendRoundedIcon /></MaterialIcon>
               <ListItemContent>
                 <Typography level="title-sm">보낸 메일함</Typography>
               </ListItemContent>
@@ -108,7 +110,7 @@ export default function Navigation() {
               selected={location.pathname === '/trash'}
               onClick={() => navigate('/trash')}
             >
-              <DeleteRoundedIcon />
+              <MaterialIcon><DeleteRoundedIcon /></MaterialIcon>
               <ListItemContent>
                 <Typography level="title-sm">휴지통</Typography>
               </ListItemContent>
@@ -126,7 +128,7 @@ export default function Navigation() {
           <Typography level="body-xs">admin@etcfriends.com</Typography>
         </Box>
         <IconButton size="sm" variant="plain" color="neutral">
-          <LogoutRoundedIcon />
+          <MaterialIcon><LogoutRoundedIcon /></MaterialIcon>
         </IconButton>
       </Box>
     </Sheet>

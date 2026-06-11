@@ -18,14 +18,14 @@ import EmailContent from '../components/email/EmailContent';
 import ComposeModal from '../components/email/ComposeModal';
 import MaterialIcon from '../components/email/MaterialIcon';
 
-const SENT_EMAILS: Email[] = [
+const INBOX_EMAILS: Email[] = [
   {
     id: 1,
     sender: '홍길동',
     subject: '프로젝트 진행 현황 보고',
     preview: '안녕하세요, 이번 주 프로젝트 진행 현황을 보고 드립니다. 현재 백엔드 API 연동 작업이 70% 완료되었으며...',
     date: '오늘 10:30',
-    unread: false,
+    unread: true,
     avatarColor: 'primary.softBg',
   },
   {
@@ -34,7 +34,7 @@ const SENT_EMAILS: Email[] = [
     subject: '[공지] 주간 미팅 일정 안내',
     preview: '안녕하세요. 이번 주 금요일 오후 3시에 주간 미팅이 예정되어 있습니다. 준비 자료를 미리 공유해 주시기 바랍니다.',
     date: '어제 15:22',
-    unread: false,
+    unread: true,
     avatarColor: 'success.softBg',
   },
   {
@@ -65,12 +65,12 @@ const SENT_EMAILS: Email[] = [
   },
 ];
 
-export default function SentMail() {
-  const [selectedEmail, setSelectedEmail] = React.useState<Email | null>(SENT_EMAILS[0]);
+export default function InboxMail() {
+  const [selectedEmail, setSelectedEmail] = React.useState<Email | null>(INBOX_EMAILS[0]);
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
-  const filtered = SENT_EMAILS.filter(
+  const filtered = INBOX_EMAILS.filter(
     (e) =>
       e.sender.includes(search) ||
       e.subject.includes(search) ||
@@ -96,7 +96,7 @@ export default function SentMail() {
         >
           <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography level="title-lg" sx={{ flex: 1 }}>
-              보낸 메일함
+              받은 메일함
             </Typography>
             <Button
               variant="solid"
