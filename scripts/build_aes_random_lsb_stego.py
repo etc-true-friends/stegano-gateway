@@ -10,6 +10,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 PngImagePlugin.MAX_TEXT_CHUNK = 256 * 1024 * 1024
 PngImagePlugin.MAX_TEXT_MEMORY = 512 * 1024 * 1024
 
+EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".pgm"}
+
 
 def require_cryptography():
     try:
@@ -21,19 +23,27 @@ def require_cryptography():
 
 
 def list_images(path):
-    exts = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-    return sorted([p for p in Path(path).iterdir() if p.suffix.lower() in exts])
+    path = Path(path)
+    if not path.exists():
+        return []
+    return sorted([p for p in path.iterdir() if p.suffix.lower() in EXTS])
 
 
 def load_rgb(path, size):
     with Image.open(path) as img:
         img = img.convert("RGB")
-        if size > 0:
+        if size > 0 and img.size != (size, size):
+            w, h = img.size
+            m = min(w, h)
+            left = (w - m) // 2
+            top = (h - m) // 2
+            img = img.crop((left, top, left + m, top + m))
             img = img.resize((size, size), Image.Resampling.LANCZOS)
         return np.array(img, dtype=np.uint8)
 
 
 def save_rgb(arr, path):
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").save(
         path,
@@ -58,16 +68,16 @@ def stable_u32(text):
 def choose_profile(rng, profile):
     if profile != "mixed":
         return profile
-    return rng.choice(["weak", "balanced", "strong"], p=[0.15, 0.55, 0.30]).item()
+    return rng.choice(["weak", "balanced", "strong"], p=[0.50, 0.40, 0.10]).item()
 
 
-def payload_range_for_profile(profile):
+def ratio_range_for_profile(profile):
     if profile == "weak":
-        return 2048, 4096
+        return 0.005, 0.015
     if profile == "balanced":
-        return 4096, 8192
+        return 0.020, 0.050
     if profile == "strong":
-        return 8192, 12288
+        return 0.060, 0.100
     raise ValueError(f"unknown profile: {profile}")
 
 
@@ -89,9 +99,9 @@ def embed_aes_random_lsb(rgb, password, payload_bytes, seed, channels="rgb"):
     h, w, _ = arr.shape
     flat = arr.reshape(-1)
     candidate_positions = select_channel_indices(h, w, channels)
-    capacity = len(candidate_positions)
+    capacity_bits = len(candidate_positions)
 
-    max_payload_bytes = capacity // 8
+    max_payload_bytes = max(1, capacity_bits // 8)
     payload_bytes = max(1, min(int(payload_bytes), max_payload_bytes))
 
     nonce = hashlib.md5(f"{password}:{seed}:{payload_bytes}:{channels}".encode("utf-8")).digest()
@@ -101,19 +111,51 @@ def embed_aes_random_lsb(rgb, password, payload_bytes, seed, channels="rgb"):
     rng = np.random.default_rng(seed)
     positions = rng.choice(candidate_positions, size=len(bits), replace=False)
     flat[positions] = (flat[positions] & 0xFE) | bits
-    return arr, int(len(bits)), int(capacity)
+    return arr, int(len(bits)), int(capacity_bits)
+
+
+def decide_payload_bytes(args, rng, used_profile, capacity_bits):
+    capacity_bytes = max(1, capacity_bits // 8)
+
+    if args.payload_bytes and args.payload_bytes > 0:
+        return int(min(args.payload_bytes, capacity_bytes)), "fixed_bytes", 0.0
+
+    if args.min_payload_bytes > 0 or args.max_payload_bytes > 0:
+        low = args.min_payload_bytes if args.min_payload_bytes > 0 else 256
+        high = args.max_payload_bytes if args.max_payload_bytes > 0 else max(low, 2048)
+        if high < low:
+            high = low
+        payload_bytes = int(rng.integers(low, high + 1))
+        return int(min(payload_bytes, capacity_bytes)), "custom_bytes", 0.0
+
+    low_ratio, high_ratio = ratio_range_for_profile(used_profile)
+    if args.min_embed_ratio > 0:
+        low_ratio = float(args.min_embed_ratio)
+    if args.max_embed_ratio > 0:
+        high_ratio = float(args.max_embed_ratio)
+    if high_ratio < low_ratio:
+        high_ratio = low_ratio
+
+    embed_ratio = float(rng.uniform(low_ratio, high_ratio))
+    payload_bits = max(8, int(capacity_bits * embed_ratio))
+    payload_bytes = max(1, payload_bits // 8)
+    return int(min(payload_bytes, capacity_bytes)), "ratio", embed_ratio
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", default="real_images")
-    parser.add_argument("--output_dir", default="dataset_aes_random_lsb/stego")
+    parser.add_argument("--output_dir", default="")
+    parser.add_argument("--stego_output_dir", default="")
+    parser.add_argument("--cover_output_dir", default="")
     parser.add_argument("--size", type=int, default=256)
 
     parser.add_argument("--profile", choices=["weak", "balanced", "strong", "mixed"], default="mixed")
     parser.add_argument("--payload_bytes", type=int, default=0)
     parser.add_argument("--min_payload_bytes", type=int, default=0)
     parser.add_argument("--max_payload_bytes", type=int, default=0)
+    parser.add_argument("--min_embed_ratio", type=float, default=0.0)
+    parser.add_argument("--max_embed_ratio", type=float, default=0.0)
     parser.add_argument("--channels", choices=["r", "g", "b", "rg", "rb", "gb", "rgb"], default="rgb")
 
     parser.add_argument("--password", default="stegano-training")
@@ -126,8 +168,12 @@ def parse_args():
 def main():
     args = parse_args()
     input_dir = Path(args.input_dir)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    stego_output_dir = Path(args.stego_output_dir or args.output_dir or "dataset_aes_random_lsb/stego")
+    cover_output_dir = Path(args.cover_output_dir) if args.cover_output_dir else None
+
+    stego_output_dir.mkdir(parents=True, exist_ok=True)
+    if cover_output_dir:
+        cover_output_dir.mkdir(parents=True, exist_ok=True)
 
     if not input_dir.exists():
         raise FileNotFoundError(f"input_dir not found: {input_dir}")
@@ -143,22 +189,15 @@ def main():
     for idx, path in enumerate(images):
         try:
             rgb = load_rgb(path, args.size)
+            if cover_output_dir is not None:
+                save_rgb(rgb, cover_output_dir / f"{path.stem}.png")
             image_seed = (int(args.seed) + idx + stable_u32(path.name)) & 0xFFFFFFFF
             rng = np.random.default_rng(image_seed)
 
-            if args.payload_bytes and args.payload_bytes > 0:
-                used_profile = "fixed"
-                payload_bytes = int(args.payload_bytes)
-            else:
-                used_profile = choose_profile(rng, args.profile)
-                low, high = payload_range_for_profile(used_profile)
-                if args.min_payload_bytes > 0:
-                    low = int(args.min_payload_bytes)
-                if args.max_payload_bytes > 0:
-                    high = int(args.max_payload_bytes)
-                if high < low:
-                    high = low
-                payload_bytes = int(rng.integers(low, high + 1))
+            h, w, _ = rgb.shape
+            capacity_bits = len(select_channel_indices(h, w, args.channels))
+            used_profile = choose_profile(rng, args.profile)
+            payload_bytes, payload_mode, target_ratio = decide_payload_bytes(args, rng, used_profile, capacity_bits)
 
             stego, used_bits, capacity = embed_aes_random_lsb(
                 rgb=rgb,
@@ -167,18 +206,28 @@ def main():
                 seed=image_seed,
                 channels=args.channels,
             )
-            out_path = output_dir / f"{path.stem}.png"
-            save_rgb(stego, out_path)
+
+            out_name = f"{path.stem}.png"
+            cover_path = ""
+            if cover_output_dir:
+                cover_path = str(cover_output_dir / out_name)
+                save_rgb(rgb, cover_output_dir / out_name)
+
+            stego_path = stego_output_dir / out_name
+            save_rgb(stego, stego_path)
             saved += 1
 
             log_rows.append({
                 "source": str(path),
-                "output": str(out_path),
+                "cover_output": cover_path,
+                "stego_output": str(stego_path),
                 "profile": used_profile,
+                "payload_mode": payload_mode,
                 "payload_bytes": payload_bytes,
                 "used_bits": used_bits,
                 "capacity_bits": capacity,
-                "embed_ratio": f"{used_bits / max(capacity, 1):.8f}",
+                "target_embed_ratio": f"{target_ratio:.8f}",
+                "actual_embed_ratio": f"{used_bits / max(capacity, 1):.8f}",
                 "channels": args.channels,
                 "seed": image_seed,
             })
@@ -192,15 +241,18 @@ def main():
     if args.log_csv:
         log_path = Path(args.log_csv)
     else:
-        log_path = output_dir / "aes_random_lsb_metadata.csv"
+        log_path = stego_output_dir / "aes_random_lsb_metadata.csv"
 
     if log_rows:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=list(log_rows[0].keys()))
             writer.writeheader()
             writer.writerows(log_rows)
 
-    print(f"done: {saved} AES random LSB stego images saved to {output_dir}")
+    if cover_output_dir:
+        print(f"done: {saved} normalized cover images saved to {cover_output_dir}")
+    print(f"done: {saved} AES random LSB stego images saved to {stego_output_dir}")
     print(f"metadata: {log_path}")
     if skipped:
         print(f"skipped: {skipped}")

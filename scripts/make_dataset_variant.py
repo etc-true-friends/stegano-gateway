@@ -34,7 +34,7 @@ def copy_tree(src, dst):
             shutil.copy2(item, target)
 
 
-def run_builder(script, input_dir, output_dir):
+def run_builder(script, input_dir, output_dir, cover_output_dir=None, extra_args=None):
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable,
@@ -46,6 +46,11 @@ def run_builder(script, input_dir, output_dir):
         "--size",
         "256",
     ]
+    if cover_output_dir is not None:
+        cover_output_dir.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["--cover_output_dir", str(cover_output_dir)])
+    if extra_args:
+        cmd.extend(extra_args)
     print(" ".join(f'"{x}"' if " " in x else x for x in cmd))
     subprocess.check_call(cmd)
 
@@ -116,6 +121,25 @@ def main():
         src_cover = src / split / "cover"
         dst_cover = dst / split / "cover"
         dst_stego = dst / split / "stego"
+
+        if variant == "aes_random_lsb":
+            # AES Random LSB is sensitive to domain/PNG-save artifacts.
+            # Rebuild BOTH cover and stego from the original base cover folder so
+            # the model cannot learn "copied cover vs PIL-saved stego" differences.
+            if dst_cover.exists():
+                shutil.rmtree(dst_cover)
+            if dst_stego.exists():
+                shutil.rmtree(dst_stego)
+            print(f"normalize cover + build stego: {variant} {split}")
+            run_builder(
+                script,
+                src_cover,
+                dst_stego,
+                cover_output_dir=dst_cover,
+                extra_args=["--profile", "mixed", "--channels", "rgb", "--skip_bad"],
+            )
+            continue
+
         if not dst_cover.exists() or count_images(dst_cover) == 0:
             print(f"copy cover: {src_cover} -> {dst_cover}")
             copy_tree(src_cover, dst_cover)
