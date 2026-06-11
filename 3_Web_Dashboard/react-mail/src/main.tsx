@@ -1,13 +1,17 @@
-
 import * as React from 'react';
 import * as ReactDOM from 'react-dom/client';
-import { StyledEngineProvider } from '@mui/material/styles';
-import App from './pages/SignIn';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import SignIn from './pages/SignIn';
+import SentMail from './pages/SentMail';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <StyledEngineProvider injectFirst>
-      <App />
-    </StyledEngineProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<SignIn />} />
+        <Route path="/sent" element={<SentMail />} />
+        <Route path="/" element={<Navigate to="/sent" replace />} />
+      </Routes>
+    </BrowserRouter>
   </React.StrictMode>
 );

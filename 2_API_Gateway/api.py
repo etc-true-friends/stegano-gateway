@@ -421,7 +421,7 @@ async def portal():
 </div>
 
 <script>
-const PROXY_TARGET_OUTBOUND = 'http://3.88.139.96:8000/scan';
+const PROXY_TARGET_OUTBOUND = '/scan';
 
 async function handleOutbound(input) {
   const file = input.files[0];
