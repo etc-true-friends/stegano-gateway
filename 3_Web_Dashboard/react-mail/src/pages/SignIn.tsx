@@ -94,7 +94,7 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
 
     if (!email.value || !/\S+@\S+\.\S+/.test(email.value)) {
       setEmailError(true);
-      setEmailErrorMessage('Please enter a valid email address.');
+      setEmailErrorMessage('아이디를 입력해주세요.');
       isValid = false;
     } else {
       setEmailError(false);
@@ -103,7 +103,7 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
 
     if (!password.value || password.value.length < 6) {
       setPasswordError(true);
-      setPasswordErrorMessage('Password must be at least 6 characters long.');
+      setPasswordErrorMessage('비밀번호는 최소 6자 이상이어야 합니다.');
       isValid = false;
     } else {
       setPasswordError(false);
