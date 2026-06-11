@@ -55,3 +55,7 @@ quarantine/
 3_Web_Dashboard/react-dashboard/dist/
 3_Web_Dashboard/react-dashboard/.env
 3_Web_Dashboard/react-dashboard/.env.local
+
+.env
+.env.*
+!.env.example

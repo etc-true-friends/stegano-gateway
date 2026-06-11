@@ -54,7 +54,6 @@ export default function ComposeModal({ open, onClose }: Props) {
 
   const handleSend = () => {
     if (!isValid) return;
-    console.log('메일 전송:', { to, subject, body, attachments });
     onClose();
     setTo('');
     setToTouched(false);
