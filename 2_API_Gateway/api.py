@@ -19,8 +19,12 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
+from pathlib import PurePosixPath
 import torch
 import boto3
+import json
+import zipfile
+
 
 # MSA 구조 경로 인식 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -182,7 +186,299 @@ def get_audit():
         "suspicious_count": suspicious_count,
         "logs": logs
     }
+# ─────────────────────────────────────────────────
+# 압축파일 내부 이미지 스캔/무해화 설정
+# ─────────────────────────────────────────────────
+ARCHIVE_MIMES = {
+    "application/zip",
+    "application/x-zip-compressed",
+    "multipart/x-zip",
+}
 
+MAX_ARCHIVE_SIZE = int(os.getenv("MAX_ARCHIVE_SIZE", 50 * 1024 * 1024))  # 50MB
+MAX_ARCHIVE_UNCOMPRESSED = int(os.getenv("MAX_ARCHIVE_UNCOMPRESSED", 200 * 1024 * 1024))  # 200MB
+MAX_ARCHIVE_FILES = int(os.getenv("MAX_ARCHIVE_FILES", 200))
+MAX_ARCHIVE_IMAGES = int(os.getenv("MAX_ARCHIVE_IMAGES", 100))
+ALLOW_NON_IMAGE_IN_ARCHIVE = os.getenv("ALLOW_NON_IMAGE_IN_ARCHIVE", "false").lower() == "true"
+
+
+def _safe_archive_member_name(name: str) -> str:
+    """
+    ZIP 내부 경로 검증.
+    ../, 절대경로 등을 차단해서 Zip Slip 공격을 막는다.
+    """
+    normalized = name.replace("\\", "/")
+    path = PurePosixPath(normalized)
+
+    if path.is_absolute() or ".." in path.parts:
+        raise HTTPException(status_code=400, detail=f"Unsafe archive path blocked: {name}")
+
+    return str(path)
+
+
+def _safe_disk_name(name: str) -> str:
+    """
+    파일명을 디스크에 저장 가능한 안전한 형태로 변환.
+    """
+    return "".join(
+        c if c.isalnum() or c in "._-" else "_"
+        for c in os.path.basename(name)
+    )[:160]
+
+
+def _record_audit(
+    direction: str,
+    original_name: str,
+    stego_prob_pct: float,
+    risk_level: str,
+    verdict: str,
+    action: str,
+):
+    """
+    기존 audit_logs 테이블에 로그 저장.
+    압축파일 내부 이미지 검사에서도 같은 로그 구조를 재사용한다.
+    """
+    timestamp_str = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO audit_logs
+        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        timestamp_str,
+        direction,
+        original_name,
+        round(stego_prob_pct, 1),
+        risk_level,
+        verdict,
+        action,
+    ))
+    conn.commit()
+    conn.close()
+
+
+def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_id: str):
+    """
+    이미지 파일 1개에 대해 기존 /scan과 같은 방식으로
+    SRNet 분석 + CDR 무해화 + 감사 로그 저장을 수행한다.
+
+    이 함수는 일반 이미지 업로드뿐 아니라 ZIP 내부 이미지 검사에서도 재사용할 수 있다.
+    """
+    img_format = imghdr.what(None, h=contents)
+
+    if img_format not in ["png", "jpeg"]:
+        raise ValueError(f"Unsupported image type: {img_format}")
+
+    safe_name = _safe_disk_name(display_name) or "stream"
+    original_ext = os.path.splitext(safe_name)[1] or f".{img_format}"
+
+    input_filename = f"{file_id}_{safe_name}"
+
+    if not os.path.splitext(input_filename)[1]:
+        input_filename += original_ext
+
+    input_path = os.path.join(UPLOAD_DIR, input_filename)
+
+    with open(input_path, "wb") as f:
+        f.write(contents)
+
+    try:
+        if S3_BUCKET:
+            s3.upload_file(input_path, S3_BUCKET, f"uploads/{input_filename}")
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
+
+    from PIL import Image
+    import numpy as np
+
+    img = Image.open(io.BytesIO(contents)).convert("RGB")
+    img = img.resize((256, 256))
+
+    img_array = np.array(img)
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
+    img_tensor = img_tensor.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        output = model(img_tensor)
+        prob = torch.softmax(output, dim=1)[0]
+
+    stego_prob_pct = prob[1].item() * 100
+
+    if stego_prob_pct >= 75.0:
+        risk_level = "HIGH"
+        verdict = "SUSPICIOUS"
+        action = "QUARANTINE"
+    elif stego_prob_pct >= 30.0:
+        risk_level = "MEDIUM"
+        verdict = "SUSPICIOUS"
+        action = "QUARANTINE"
+    else:
+        risk_level = "LOW"
+        verdict = "CLEAN"
+        action = "BYPASS"
+
+    output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
+    output_path = os.path.join(SANITIZED_DIR, output_filename)
+
+    cdr_info = sanitizer.sanitize(input_path, output_path)
+
+    try:
+        if S3_BUCKET:
+            s3.upload_file(output_path, S3_BUCKET, f"sanitized/{output_filename}")
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
+
+    if action == "QUARANTINE":
+        quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
+        shutil.move(input_path, quarantine_path)
+
+        try:
+            if S3_BUCKET:
+                s3.upload_file(quarantine_path, S3_BUCKET, f"quarantine/{input_filename}")
+        except Exception as e:
+            print(f"S3 Upload Failed: {e}")
+
+        try:
+            os.chmod(quarantine_path, 0o440)
+        except Exception:
+            pass
+
+    _record_audit(
+        direction=direction,
+        original_name=display_name,
+        stego_prob_pct=stego_prob_pct,
+        risk_level=risk_level,
+        verdict=verdict,
+        action=action,
+    )
+
+    return {
+        "original_name": display_name,
+        "stego_probability": round(stego_prob_pct, 1),
+        "risk_level": risk_level,
+        "verdict": verdict,
+        "action": action,
+        "sanitized_path": output_path,
+        "cdr": cdr_info,
+    }
+
+
+def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file_id: str):
+    """
+    ZIP 내부 이미지를 전부 검사하고,
+    CDR 처리된 이미지들만 모아서 sanitized ZIP으로 다시 반환한다.
+    """
+    if len(contents) > MAX_ARCHIVE_SIZE:
+        raise HTTPException(status_code=413, detail="Archive too large")
+
+    if not zipfile.is_zipfile(io.BytesIO(contents)):
+        raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
+
+    result_zip_name = f"{file_id}_{_safe_disk_name(os.path.splitext(archive_name)[0] or 'archive')}_sanitized.zip"
+    result_zip_path = os.path.join(SANITIZED_DIR, result_zip_name)
+
+    results = []
+    suspicious_count = 0
+    total_uncompressed = 0
+    image_count = 0
+
+    with zipfile.ZipFile(io.BytesIO(contents), "r") as zin, \
+            zipfile.ZipFile(result_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+
+        infos = zin.infolist()
+
+        if len(infos) > MAX_ARCHIVE_FILES:
+            raise HTTPException(status_code=413, detail="Too many files in archive")
+
+        for info in infos:
+            if info.is_dir():
+                continue
+
+            if info.flag_bits & 0x1:
+                raise HTTPException(status_code=400, detail="Encrypted zip entries are not supported")
+
+            member_name = _safe_archive_member_name(info.filename)
+
+            total_uncompressed += info.file_size
+            if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED:
+                raise HTTPException(status_code=413, detail="Archive expands too large")
+
+            raw = zin.read(info)
+            img_format = imghdr.what(None, h=raw)
+
+            if img_format in ["png", "jpeg"]:
+                image_count += 1
+
+                if image_count > MAX_ARCHIVE_IMAGES:
+                    raise HTTPException(status_code=413, detail="Too many images in archive")
+
+                scan_result = _scan_image_bytes(
+                    raw,
+                    display_name=f"{archive_name}::{member_name}",
+                    direction=direction,
+                    file_id=f"{file_id}_{image_count}",
+                )
+
+                results.append({
+                    k: v for k, v in scan_result.items()
+                    if k not in ["sanitized_path", "cdr"]
+                })
+
+                if scan_result["verdict"] == "SUSPICIOUS":
+                    suspicious_count += 1
+
+                out_member = str(PurePosixPath(member_name).with_suffix(".sanitized.jpg"))
+                zout.write(scan_result["sanitized_path"], out_member)
+
+            elif ALLOW_NON_IMAGE_IN_ARCHIVE:
+                # 기본값 false.
+                # 보안 게이트웨이 관점에서는 이미지 외 파일은 드롭하는 편이 안전하다.
+                zout.writestr(member_name, raw)
+
+    if image_count == 0:
+        raise HTTPException(status_code=400, detail="No supported images found inside archive")
+
+    overall_verdict = "SUSPICIOUS" if suspicious_count else "CLEAN"
+
+    overall_risk = (
+        "HIGH"
+        if any(r["risk_level"] == "HIGH" for r in results)
+        else ("MEDIUM" if suspicious_count else "LOW")
+    )
+
+    overall_action = "QUARANTINE" if suspicious_count else "BYPASS"
+    max_prob = max(r["stego_probability"] for r in results)
+
+    # 압축파일 전체 요약 로그 1개 추가.
+    # 내부 이미지별 로그는 _scan_image_bytes()에서 이미 저장됨.
+    _record_audit(
+        direction=direction,
+        original_name=archive_name,
+        stego_prob_pct=max_prob,
+        risk_level=overall_risk,
+        verdict=overall_verdict,
+        action=f"ARCHIVE_{overall_action}",
+    )
+
+    headers = {
+        "X-Gateway-Verdict": overall_verdict,
+        "X-Gateway-Risk-Level": overall_risk,
+        "X-Gateway-Stego-Prob": f"{max_prob:.1f}%",
+        "X-Gateway-File-ID": str(file_id),
+        "X-Gateway-Archive-Images": str(image_count),
+        "X-Gateway-Archive-Suspicious": str(suspicious_count),
+        "X-Gateway-Archive-Mode": "ZIP_IMAGE_CDR",
+        "Access-Control-Expose-Headers": "*",
+    }
+
+    return FileResponse(
+        path=result_zip_path,
+        filename=result_zip_name,
+        media_type="application/zip",
+        headers=headers,
+    )
 # ─────────────────────────────────────────────────
 # 망연계 파일 통제 코어 파이프라인 라우터
 # ─────────────────────────────────────────────────
@@ -193,6 +489,22 @@ async def scan_and_sanitize(
 ):
     file_id = str(uuid.uuid4())[:8]
     contents = await file.read()
+    # ZIP 압축파일이면 내부 이미지들을 개별 스캔 + CDR 후 sanitized zip 반환
+    content_type = (file.content_type or "").lower()
+    filename_lower = (file.filename or "").lower()
+
+    is_zip_payload = zipfile.is_zipfile(io.BytesIO(contents))
+
+    if filename_lower.endswith(".zip") or content_type in ARCHIVE_MIMES or is_zip_payload:
+      if not is_zip_payload:
+        raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
+
+      return _scan_archive_bytes(
+        contents,
+        file.filename or "archive.zip",
+        direction,
+        file_id
+    )
     
     # libmagic 의존성 우회: 내장 imghdr을 통한 안전한 포맷 검증
     img_format = imghdr.what(None, h=contents)
@@ -381,7 +693,7 @@ async def portal():
     <h2>OUTBOUND — 파일 반출 (AI 검사 적용)</h2>
     <p>망연계 시스템을 통해 외부로 파일을 전송합니다. 전송 전 SRNet AI 엔진이 은닉 데이터를 검사합니다.</p>
     <div class="upload-area" onclick="document.getElementById('outbound-file').click()">
-      <input type="file" id="outbound-file" accept="image/png,image/jpeg" onchange="handleOutbound(this)">
+      <input type="file" id="outbound-file" accept="image/png,image/jpeg,application/zip,.zip" onchange="handleOutbound(this)">
       <label>
         <div class="icon">[ UPLOAD ]</div>
         <p>클릭하여 검사할 이미지 파일 선택</p>
@@ -428,8 +740,14 @@ async function handleOutbound(input) {
   if (!file) return;
 
   const preview = document.getElementById('outbound-preview');
+
+if (file.type.startsWith('image/')) {
   preview.src = URL.createObjectURL(file);
   preview.style.display = 'block';
+} else {
+  preview.removeAttribute('src');
+  preview.style.display = 'none';
+}
 
   const loading = document.getElementById('outbound-loading');
   const result = document.getElementById('outbound-result');
