@@ -31,16 +31,14 @@ services:
       - api-gateway
     restart: always
 
-  web-dashboard:
-    image: python:3.10-slim
-    container_name: stegano-dashboard
+  react-dashboard:
+    build:
+      context: ./3_Web_Dashboard/react-dashboard
+      args:
+         - VITE_API_BASE=http://3.88.139.96:8000
+    container_name: stegano-react-dashboard
     ports:
-      - "8501:8501"
-    volumes:
-      - ./3_Web_Dashboard:/app
-      - ./4_Local_Workspace:/4_Local_Workspace
-    working_dir: /app
-    command: sh -c "pip install streamlit requests && streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0"
+      - "3000:80"
     depends_on:
       - api-gateway
     restart: always
