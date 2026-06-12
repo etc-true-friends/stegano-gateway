@@ -68,16 +68,21 @@ def stable_u32(text):
 def choose_profile(rng, profile):
     if profile != "mixed":
         return profile
-    return rng.choice(["weak", "balanced", "strong"], p=[0.50, 0.40, 0.10]).item()
+    return rng.choice(["weak", "balanced", "strong"], p=[0.15, 0.65, 0.20]).item()
 
 
 def ratio_range_for_profile(profile):
+    # The values are fractions of available RGB LSB positions used by the encrypted payload.
+    # Because about half of target bits already match the payload bit, the actual changed
+    # channel values are usually around half of this ratio.
+    # V3 was too weak after cover normalization and produced 50%/0.693 learning failure.
+    # V4 keeps normalized cover/stego saving but restores enough AES-LSB signal to learn.
     if profile == "weak":
-        return 0.005, 0.015
+        return 0.080, 0.140
     if profile == "balanced":
-        return 0.020, 0.050
+        return 0.180, 0.300
     if profile == "strong":
-        return 0.060, 0.100
+        return 0.350, 0.500
     raise ValueError(f"unknown profile: {profile}")
 
 
@@ -217,6 +222,9 @@ def main():
             save_rgb(stego, stego_path)
             saved += 1
 
+            changed_values = int(np.sum(rgb != stego))
+            changed_pixels = int(np.sum(np.any(rgb != stego, axis=2)))
+
             log_rows.append({
                 "source": str(path),
                 "cover_output": cover_path,
@@ -228,6 +236,9 @@ def main():
                 "capacity_bits": capacity,
                 "target_embed_ratio": f"{target_ratio:.8f}",
                 "actual_embed_ratio": f"{used_bits / max(capacity, 1):.8f}",
+                "changed_values": changed_values,
+                "changed_pixels": changed_pixels,
+                "changed_value_ratio": f"{changed_values / max(capacity, 1):.8f}",
                 "channels": args.channels,
                 "seed": image_seed,
             })
