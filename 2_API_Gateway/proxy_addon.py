@@ -9,7 +9,12 @@ from mitmproxy import http
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/scan")
 IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg"}
+ARCHIVE_MIMES = {
+    "application/zip",
+    "application/x-zip-compressed",
+}
 
+SCAN_MIMES = IMAGE_MIMES | ARCHIVE_MIMES
 # 500 에러 방지용 256x256 픽셀 정상 PNG 이미지 바이너리 (Base64)
 MOCK_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAACv0lEQVR4nO3TMQEAIAzAsIH/C3e4QQZHEwV9uuaegar9OwB+"
@@ -26,6 +31,21 @@ MOCK_BASE64 = (
     "AKQZgDQDkGYA0h7VsgNrD8aOMAAAAABJRU5ErkJggg=="
 )
 MOCK_PNG = base64.b64decode(MOCK_BASE64)
+def guess_upload_meta(raw: bytes, default_name: str = "proxy_stream.bin"):
+    """
+    mitmproxy에서 받은 raw body를 보고 /scan에 보낼 파일명과 MIME을 결정한다.
+    Content-Type이 애매한 application/octet-stream이어도 ZIP/PNG/JPEG 시그니처로 구분한다.
+    """
+    if raw.startswith(b"PK\x03\x04") or raw.startswith(b"PK\x05\x06") or raw.startswith(b"PK\x07\x08"):
+        return "archive_payload.zip", "application/zip"
+
+    if raw.startswith(b"\x89PNG"):
+        return "image_payload.png", "image/png"
+
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image_payload.jpg", "image/jpeg"
+
+    return default_name, "application/octet-stream"
 
 class SteganoCDRAddon:
     def __init__(self):
@@ -85,9 +105,10 @@ class SteganoCDRAddon:
                 print(f"[+] 전송 파일 크기: {len(raw_file)} bytes")
 
                 try:
+                    upload_name, upload_mime = guess_upload_meta(raw_file, "outbound_payload.bin")
                     response = requests.post(
                         API_URL,
-                        files={"file": ("outbound_leak_attempt.png", raw_file, "image/png")},
+                        files={"file": (upload_name, raw_file, upload_mime)},
                         data={"direction": "OUTBOUND"},
                         timeout=10.0,
                         proxies={"http": None, "https": None}
@@ -146,24 +167,25 @@ class SteganoCDRAddon:
         # ─────────────────────────────────────────────────
         content_type = flow.request.headers.get("content-type", "").lower()
         client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else "127.0.0.1"
-        if self.is_internal(client_ip) and any(mime in content_type for mime in IMAGE_MIMES):
+        if self.is_internal(client_ip) and any(mime in content_type for mime in SCAN_MIMES):
             self._process(flow, direction="OUTBOUND")
 
     def response(self, flow: http.HTTPFlow):
         if not flow.response or "external-mail-server.local" in flow.request.pretty_host:
             return
         content_type = flow.response.headers.get("content-type", "").lower()
-        if any(mime in content_type for mime in IMAGE_MIMES):
+        if any(mime in content_type for mime in SCAN_MIMES):
             self._process(flow, direction="INBOUND")
 
     def _process(self, flow: http.HTTPFlow, direction: str):
         try:
             raw = flow.request.content if direction == "OUTBOUND" else flow.response.content
             if not raw: return
+            upload_name, upload_mime = guess_upload_meta(raw, "proxy_stream.bin")
 
             response = requests.post(
                 API_URL,
-                files={"file": ("proxy_stream.png", raw, "image/png")},
+                files={"file": (upload_name, raw, upload_mime)},
                 data={"direction": direction},
                 timeout=5.0,
                 proxies={"http": None, "https": None}

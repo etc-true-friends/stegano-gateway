@@ -16,6 +16,9 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
+          command_timeout: 30m
           script: |
             cd ~/stegano-gateway
-            ./deploy.sh
+            git fetch origin
+            git reset --hard origin/main
+            bash deploy.sh

@@ -12,11 +12,16 @@ import os
 import time
 import requests
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ─────────────────────────────────────────────────
 # 설정
 # ─────────────────────────────────────────────────
-ACCESS_KEY  = "AqxyVQzJ1nf3DGPBFAXwvPoV958eWOBo4WhNL1Z2SIM"
+ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
+if not ACCESS_KEY:
+    raise RuntimeError("UNSPLASH_ACCESS_KEY 환경변수가 설정되지 않았습니다.")
 SAVE_DIR    = Path("real_images")
 IMG_SIZE    = "regular"   # small / regular / full
 PER_PAGE    = 30
