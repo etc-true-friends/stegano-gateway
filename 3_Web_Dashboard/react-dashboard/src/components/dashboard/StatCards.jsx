@@ -1,10 +1,10 @@
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 
 const CARDS = [
-  { key: 'total', label: '총 스캔 수', dataKey: 'total' },
-  { key: 'suspicious', label: '스테가노 탐지', dataKey: 'suspicious' },
-  { key: 'cdr', label: 'CDR 무해화', dataKey: 'cdr' },
-  { key: 'rate', label: '평균 위험도', dataKey: 'rate' },
+  { key: 'total', label: '총 스캔 수', dataKey: 'total', color: '#1e2a4a' },
+  { key: 'suspicious', label: '스테가노 탐지', dataKey: 'suspicious', color: '#1e2a4a' },
+  { key: 'cdr', label: 'CDR 무해화', dataKey: 'cdr', color: '#1e2a4a' },
+  { key: 'rate', label: '평균 위험도', dataKey: 'rate', color: '#dc2626' },
 ];
 
 function buildSparkData(logs) {
@@ -38,17 +38,20 @@ export default function StatCards({ total, suspicious, logs = [] }) {
     : '0.0%';
 
   const sparkData = buildSparkData(logs);
-  console.log('sparkData:', sparkData);
   const values = { total, suspicious, cdr, rate: avgRisk };
 
   return (
     <div className="stat-grid">
       {CARDS.map(c => (
-        <div key={c.key} className="stat-card">
-          <div className="stat-value" style={{ color: '#1e2a4a' }}>
+        <div key={c.key} className="stat-card" style={{
+          borderTop: `3px solid ${c.color}`
+        }}>
+          <div className="stat-label" style={{ color: c.color, marginBottom: 6 }}>
+            {c.label}
+          </div>
+          <div className="stat-value" style={{ color: c.color }}>
             {values[c.key]}
           </div>
-          <div className="stat-label">{c.label}</div>
           {sparkData.length >= 1 && (
             <div style={{ marginTop: 12 }}>
               <ResponsiveContainer width="100%" height={40}>
@@ -56,7 +59,7 @@ export default function StatCards({ total, suspicious, logs = [] }) {
                   <Line
                     type="monotone"
                     dataKey={c.dataKey}
-                    stroke="#7ec8c8"
+                    stroke={c.color}
                     strokeWidth={1.5}
                     dot={false}
                   />
