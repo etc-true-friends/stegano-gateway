@@ -44,9 +44,9 @@ function makeLog(minutesAgo) {
   };
 }
 
-// 최근 60분 동안 30건 생성
-export const MOCK_LOGS = Array.from({ length: 30 }, (_, i) =>
-  makeLog(randomBetween(i * 2, i * 2 + 2))
+// 최근 7일치 데이터 150건 생성
+export const MOCK_LOGS = Array.from({ length: 150 }, (_, i) =>
+  makeLog(randomBetween(i * 67, i * 67 + 67))
 ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
 export const MOCK_AUDIT = {
