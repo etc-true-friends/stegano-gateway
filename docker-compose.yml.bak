@@ -12,7 +12,7 @@ services:
       - ./4_Local_Workspace:/4_Local_Workspace
     environment:
       - PYTHONUNBUFFERED=1
-      - S3_BUCKET=${S3_BUCKET}
+      - S3_BUCKET=stegano-gateway-storage-537124976047-us-east-1-an
     restart: always
 
   mitmproxy:
@@ -26,19 +26,21 @@ services:
       - ./4_Local_Workspace:/4_Local_Workspace
     environment:
       - API_URL=http://api-gateway:8000/scan
-    command: sh -c "pip install requests && mitmweb -s /app/proxy_addon.py --listen-host 0.0.0.0 --listen-port 8080 --web-host 0.0.0.0 --web-port 8081 --set web_password=${MITMPROXY_WEB_PASSWORD}"
+    command: sh -c "pip install requests && mitmweb -s /app/proxy_addon.py --listen-host 0.0.0.0 --listen-port 8080 --web-host 0.0.0.0 --web-port 8081 --set web_password=quokka_admin"
     depends_on:
       - api-gateway
     restart: always
 
-  react-dashboard:
-    build:
-      context: ./3_Web_Dashboard/react-dashboard
-      args:
-         - VITE_API_BASE=http://3.88.139.96:8000
-    container_name: stegano-react-dashboard
+  web-dashboard:
+    image: python:3.10-slim
+    container_name: stegano-dashboard
     ports:
-      - "3000:80"
+      - "8501:8501"
+    volumes:
+      - ./3_Web_Dashboard:/app
+      - ./4_Local_Workspace:/4_Local_Workspace
+    working_dir: /app
+    command: sh -c "pip install streamlit requests && streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0"
     depends_on:
       - api-gateway
     restart: always

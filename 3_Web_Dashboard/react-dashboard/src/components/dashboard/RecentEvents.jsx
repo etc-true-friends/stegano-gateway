@@ -1,5 +1,3 @@
-const RISK_DOT = { HIGH: '🔴', MEDIUM: '🟡', LOW: '🟢' };
-
 export default function RecentEvents({ logs }) {
   const recent = [...logs].reverse().slice(0, 7);
 
@@ -12,13 +10,20 @@ export default function RecentEvents({ logs }) {
       {recent.map((log, i) => {
         const verdict = log.verdict || log.action || '-';
         const time = (log.timestamp || '').slice(11, 19);
+        const isAlert = verdict !== 'CLEAN';
         return (
-          <li key={i} className={`event-item ${verdict !== 'CLEAN' ? 'event-alert' : ''}`}>
+          <li key={i} className={`event-item ${isAlert ? 'event-alert' : ''}`}>
             <span className="event-time">{time}</span>
-            <span className="event-icon">{RISK_DOT[log.risk_level] || '⚪'}</span>
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8,
+              borderRadius: '50%',
+              background: log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
+              flexShrink: 0
+            }}/>
             <span className="event-name">{log.original_name || '-'}</span>
-            <span className={`event-verdict ${verdict !== 'CLEAN' ? 'verdict-suspicious' : 'verdict-clean'}`}>
-              {verdict}
+            <span className={`event-verdict ${isAlert ? 'verdict-suspicious' : 'verdict-clean'}`}>
+              {verdict === 'CLEAN' ? '정상' : '의심'}
             </span>
           </li>
         );
