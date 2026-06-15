@@ -14,29 +14,58 @@ import ModalDialog from '@mui/joy/ModalDialog';
 import Stack from '@mui/joy/Stack';
 import Textarea from '@mui/joy/Textarea';
 import Typography from '@mui/joy/Typography';
+import Alert from '@mui/joy/Alert';
+import CircularProgress from '@mui/joy/CircularProgress';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import AttachFileRoundedIcon from '@mui/icons-material/AttachFileRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
+import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import MaterialIcon from './MaterialIcon';
+import { sendMail, findUserByUsername, UserInfo } from '../../api/mail';
+import { getStoredAuthUser } from '../../api/auth';
 
 type Props = {
   open: boolean;
   onClose: () => void;
 };
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+type SendState = 'idle' | 'scanning' | 'sending' | 'done' | 'blocked' | 'error';
 
 export default function ComposeModal({ open, onClose }: Props) {
   const [to, setTo] = React.useState('');
   const [toTouched, setToTouched] = React.useState(false);
+  const [toUser, setToUser] = React.useState<UserInfo | null>(null);
+  const [toNotFound, setToNotFound] = React.useState(false);
   const [subject, setSubject] = React.useState('');
   const [body, setBody] = React.useState('');
   const [attachments, setAttachments] = React.useState<File[]>([]);
+  const [sendState, setSendState] = React.useState<SendState>('idle');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const toError = toTouched && to.length > 0 && !EMAIL_REGEX.test(to);
-  const isValid = EMAIL_REGEX.test(to) && !!subject;
+  const toError = toTouched && to.length > 0 && toNotFound;
+  const isValid = !!toUser && !!subject;
+  const isBusy = sendState === 'scanning' || sendState === 'sending';
+
+  const handleToBlur = async () => {
+    setToTouched(true);
+    if (!to.trim()) return;
+    const user = await findUserByUsername(to.trim());
+    if (user) {
+      setToUser(user);
+      setToNotFound(false);
+    } else {
+      setToUser(null);
+      setToNotFound(true);
+    }
+  };
+
+  const handleToChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTo(e.target.value);
+    setToUser(null);
+    setToNotFound(false);
+  };
 
   const handleAttachClick = () => {
     fileInputRef.current?.click();
@@ -45,7 +74,6 @@ export default function ComposeModal({ open, onClose }: Props) {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     setAttachments((prev) => [...prev, ...files]);
-    // input 초기화해서 같은 파일 재선택 가능하게
     e.target.value = '';
   };
 
@@ -53,20 +81,76 @@ export default function ComposeModal({ open, onClose }: Props) {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleSend = () => {
-    if (!isValid) return;
-    onClose();
+  const resetForm = () => {
     setTo('');
     setToTouched(false);
+    setToUser(null);
+    setToNotFound(false);
     setSubject('');
     setBody('');
     setAttachments([]);
+    setSendState('idle');
   };
+
+  const handleClose = () => {
+    if (isBusy) return;
+    resetForm();
+    onClose();
+  };
+
+  const handleSend = async () => {
+    if (!isValid || isBusy) return;
+
+    const user = getStoredAuthUser();
+    if (!user) {
+      setSendState('error');
+      return;
+    }
+
+    try {
+      if (attachments.length > 0) {
+        setSendState('scanning');
+      } else {
+        setSendState('sending');
+      }
+
+      const result = await sendMail({
+        senderId: user.id,
+        recipientId: toUser!.id,
+        subject,
+        body,
+        attachments,
+      });
+
+      if (result.status === 'BLOCKED') {
+        setSendState('blocked');
+      } else {
+        setSendState('done');
+        setTimeout(() => {
+          resetForm();
+          onClose();
+        }, 1500);
+      }
+    } catch {
+      setSendState('error');
+    }
+  };
+
+  const statusMessage: Record<SendState, { color: 'success' | 'danger' | 'warning' | 'neutral'; text: string; icon?: React.ReactNode } | null> = {
+    idle: null,
+    scanning: null,
+    sending: null,
+    done: { color: 'success', text: '메일이 성공적으로 전송되었습니다.', icon: <MaterialIcon><CheckCircleRoundedIcon /></MaterialIcon> },
+    blocked: { color: 'danger', text: '첨부파일에서 위협이 탐지되어 전송이 차단되었습니다.', icon: <MaterialIcon><WarningRoundedIcon /></MaterialIcon> },
+    error: { color: 'warning', text: '전송 중 오류가 발생했습니다. 다시 시도해주세요.' },
+  };
+
+  const alert = statusMessage[sendState];
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       slotProps={{ backdrop: { sx: { backdropFilter: 'none', backgroundColor: 'transparent' } } }}
     >
       <ModalDialog
@@ -91,20 +175,21 @@ export default function ComposeModal({ open, onClose }: Props) {
           <Typography level="title-md" sx={{ flex: 1 }}>
             새 메일 작성
           </Typography>
-          <ModalClose sx={{ position: 'static' }} />
+          <ModalClose sx={{ position: 'static' }} onClick={handleClose} />
         </Box>
 
         <Stack sx={{ px: 3, py: 2, gap: 1.5, overflow: 'auto', flex: 1 }}>
           <FormControl error={toError}>
             <FormLabel>받는 사람</FormLabel>
             <Input
-              placeholder="이메일 주소 입력"
+              placeholder="username 입력"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
-              onBlur={() => setToTouched(true)}
+              onChange={handleToChange}
+              onBlur={handleToBlur}
+              disabled={isBusy}
             />
             {toError && (
-              <FormHelperText>올바른 이메일 형식이 아닙니다.</FormHelperText>
+              <FormHelperText>존재하지 않는 사용자입니다.</FormHelperText>
             )}
           </FormControl>
 
@@ -114,6 +199,7 @@ export default function ComposeModal({ open, onClose }: Props) {
               placeholder="제목 입력"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
+              disabled={isBusy}
             />
           </FormControl>
 
@@ -126,6 +212,7 @@ export default function ComposeModal({ open, onClose }: Props) {
               value={body}
               onChange={(e) => setBody(e.target.value)}
               sx={{ flex: 1 }}
+              disabled={isBusy}
             />
           </FormControl>
 
@@ -144,6 +231,7 @@ export default function ComposeModal({ open, onClose }: Props) {
                       variant="plain"
                       color="neutral"
                       onClick={() => handleRemoveAttachment(idx)}
+                      disabled={isBusy}
                       sx={{ '--IconButton-size': '28px', pointerEvents: 'all' }}
                     >
                       <MaterialIcon><CloseRoundedIcon /></MaterialIcon>
@@ -155,6 +243,12 @@ export default function ComposeModal({ open, onClose }: Props) {
                 </Chip>
               ))}
             </Box>
+          )}
+
+          {alert && (
+            <Alert color={alert.color} startDecorator={alert.icon}>
+              {alert.text}
+            </Alert>
           )}
         </Stack>
 
@@ -181,16 +275,24 @@ export default function ComposeModal({ open, onClose }: Props) {
             color="neutral"
             aria-label="첨부파일"
             onClick={handleAttachClick}
+            disabled={isBusy}
           >
             <MaterialIcon><AttachFileRoundedIcon /></MaterialIcon>
           </IconButton>
           <Box sx={{ flex: 1 }} />
+          {isBusy && (
+            <Typography level="body-sm" color="neutral" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <CircularProgress size="sm" />
+              {sendState === 'scanning' ? '첨부파일 보안 검사 중...' : '전송 중...'}
+            </Typography>
+          )}
           <Button
             variant="solid"
             color="primary"
             endDecorator={<MaterialIcon><SendRoundedIcon /></MaterialIcon>}
             onClick={handleSend}
-            disabled={!isValid}
+            disabled={!isValid || isBusy}
+            loading={isBusy}
           >
             전송
           </Button>
