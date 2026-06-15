@@ -42,3 +42,15 @@ services:
     depends_on:
       - api-gateway
     restart: always
+
+  react-mail:
+    build:
+      context: ./3_Web_Dashboard/react-mail
+      args:
+         - VITE_API_BASE=http://3.88.139.96:8000
+    container_name: stegano-react-mail
+    ports:
+      - "3001:80"
+    depends_on:
+      - api-gateway
+    restart: always
