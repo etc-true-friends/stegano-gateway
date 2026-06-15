@@ -55,6 +55,7 @@ UPLOAD_DIR = os.path.join(WORKSPACE_DIR, "uploads")
 SANITIZED_DIR = os.path.join(WORKSPACE_DIR, "sanitized")
 QUARANTINE_DIR = os.path.join(WORKSPACE_DIR, "quarantine")
 DB_PATH = os.path.join(WORKSPACE_DIR, "stegano_audit.db")
+MAIL_DB_PATH = os.path.join(CURRENT_DIR, "test.db")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(SANITIZED_DIR, exist_ok=True)
@@ -70,7 +71,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT,
-            direction TEXT,          
+            direction TEXT,
             original_name TEXT,
             stego_probability REAL,
             risk_level TEXT,
@@ -628,6 +629,127 @@ async def scan_and_sanitize(
         if os.path.exists(input_path) and action != "QUARANTINE":
             os.remove(input_path)
         raise HTTPException(status_code=500, detail=f"인라인 망연계 처리 실패: {str(e)}")
+
+# ─────────────────────────────────────────────────
+# 직원 username 조회 엔드포인트
+# ─────────────────────────────────────────────────
+@app.get("/users/{username}")
+def get_user_by_username(username: str):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
+        (username.strip(),)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
+
+    return {"id": row["id"], "username": row["username"]}
+
+
+# ─────────────────────────────────────────────────
+# 메일 전송 엔드포인트
+# ─────────────────────────────────────────────────
+@app.post("/mails/send")
+async def send_mail(
+    sender_id: int = Form(...),
+    recipient_id: int = Form(...),
+    subject: str = Form(...),
+    body: str = Form(""),
+    status: str = Form("SENT"),
+    parent_mail_id: int = Form(0),
+    attachments: list[UploadFile] = File(default=[]),
+):
+    now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    cursor = conn.cursor()
+
+    # 발신자 SENT 메일함 조회, 없으면 생성
+    cursor.execute(
+        "SELECT id FROM mailbox WHERE employee_id = ? AND type = 'SENT' LIMIT 1",
+        (sender_id,)
+    )
+    row = cursor.fetchone()
+    if row:
+        mailbox_id = row[0]
+    else:
+        cursor.execute(
+            "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'SENT', ?)",
+            (sender_id, now)
+        )
+        mailbox_id = cursor.lastrowid
+
+    # 수신자 INBOX 메일함 조회, 없으면 생성
+    cursor.execute(
+        "SELECT id FROM mailbox WHERE employee_id = ? AND type = 'INBOX' LIMIT 1",
+        (recipient_id,)
+    )
+    row = cursor.fetchone()
+    if row:
+        inbox_id = row[0]
+    else:
+        cursor.execute(
+            "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'INBOX', ?)",
+            (recipient_id, now)
+        )
+        inbox_id = cursor.lastrowid
+
+    final_status = status if status in ("SENT", "BLOCKED", "QUEUED", "SCANNING", "FAILED") else "SENT"
+
+    # 발신자 SENT 메일함에 저장
+    cursor.execute("""
+        INSERT INTO mail (sender_id, mailbox_id, parent_mail_id, subject, body, status, sent_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (sender_id, mailbox_id, parent_mail_id, subject, body, final_status, now, now))
+    mail_id = cursor.lastrowid
+
+    # SENT인 경우에만 수신자 INBOX에도 저장
+    if final_status == "SENT":
+        cursor.execute("""
+            INSERT INTO mail (sender_id, mailbox_id, parent_mail_id, subject, body, status, sent_at, created_at)
+            VALUES (?, ?, ?, ?, ?, 'SENT', ?, ?)
+        """, (sender_id, inbox_id, parent_mail_id, subject, body, now, now))
+
+    saved_attachments = []
+    for attachment in attachments:
+        if not attachment.filename:
+            continue
+        file_id = str(uuid.uuid4())[:8]
+        safe_name = _safe_disk_name(attachment.filename)
+        stored_path = os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
+        contents = await attachment.read()
+        with open(stored_path, "wb") as f:
+            f.write(contents)
+
+        cursor.execute("""
+            INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (mail_id, attachment.filename, stored_path, len(contents), attachment.content_type, now))
+        saved_attachments.append({
+            "original_file_name": attachment.filename,
+            "file_size": len(contents),
+            "mime_type": attachment.content_type,
+        })
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": mail_id,
+        "sender_id": sender_id,
+        "mailbox_id": mailbox_id,
+        "subject": subject,
+        "body": body,
+        "status": final_status,
+        "sent_at": now,
+        "attachments": saved_attachments,
+    }
+
 
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)
