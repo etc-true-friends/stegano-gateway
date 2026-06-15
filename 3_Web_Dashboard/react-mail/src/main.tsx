@@ -12,7 +12,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/login" element={<SignIn />} />
         <Route path="/sent" element={<SentMail />} />
         <Route path="/inbox" element={<InboxMail />} />
-        <Route path="/" element={<Navigate to="/sent" replace />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

@@ -54,7 +54,7 @@ export default function Navigation() {
         <IconButton variant="soft" color="primary" size="sm">
           <img src={logo} alt="logo" style={{ width: 60, height: 40 }} />
         </IconButton>
-        <Typography level="title-lg">ETC Friends</Typography>
+        <Typography level="title-lg">/etc/friends</Typography>
       </Box>
 
       <Box
