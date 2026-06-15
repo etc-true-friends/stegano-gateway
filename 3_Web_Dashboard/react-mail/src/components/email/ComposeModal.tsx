@@ -18,6 +18,7 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import AttachFileRoundedIcon from '@mui/icons-material/AttachFileRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
+import MaterialIcon from './MaterialIcon';
 
 type Props = {
   open: boolean;
@@ -136,7 +137,7 @@ export default function ComposeModal({ open, onClose }: Props) {
                   size="md"
                   variant="soft"
                   color="neutral"
-                  startDecorator={<InsertDriveFileRoundedIcon />}
+                  startDecorator={<MaterialIcon><InsertDriveFileRoundedIcon /></MaterialIcon>}
                   endDecorator={
                     <IconButton
                       size="md"
@@ -145,7 +146,7 @@ export default function ComposeModal({ open, onClose }: Props) {
                       onClick={() => handleRemoveAttachment(idx)}
                       sx={{ '--IconButton-size': '28px', pointerEvents: 'all' }}
                     >
-                      <CloseRoundedIcon />
+                      <MaterialIcon><CloseRoundedIcon /></MaterialIcon>
                     </IconButton>
                   }
                   sx={{ fontSize: 'sm', py: 0.5 }}
@@ -181,13 +182,13 @@ export default function ComposeModal({ open, onClose }: Props) {
             aria-label="첨부파일"
             onClick={handleAttachClick}
           >
-            <AttachFileRoundedIcon />
+            <MaterialIcon><AttachFileRoundedIcon /></MaterialIcon>
           </IconButton>
           <Box sx={{ flex: 1 }} />
           <Button
             variant="solid"
             color="primary"
-            endDecorator={<SendRoundedIcon />}
+            endDecorator={<MaterialIcon><SendRoundedIcon /></MaterialIcon>}
             onClick={handleSend}
             disabled={!isValid}
           >

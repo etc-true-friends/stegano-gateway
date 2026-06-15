@@ -35,6 +35,7 @@ sys.path.append(SRNET_DIR)
 
 from model.model import Srnet
 from cdr_sanitizer import CDRSanitizer
+import auth
 
 app = FastAPI(title="/etc/friends Integrated Security Pipeline (In-Line Enhanced)")
 
@@ -80,7 +81,13 @@ def init_db():
     conn.commit()
     conn.close()
 
+    auth.configure(DB_PATH)
+    auth.init_employee_table()
+    auth.seed_default_employee()
+
 init_db()
+
+app.include_router(auth.router)
 
 # 하드웨어 및 인공지능 요원 초기화
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

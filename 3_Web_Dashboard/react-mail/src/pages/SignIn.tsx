@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -16,6 +17,7 @@ import { styled } from '@mui/material/styles';
 import AppTheme from '../theme/AppTheme';
 import ColorModeSelect from '../theme/ColorModeSelect';
 import { EtcFriendsIcon } from '../components/CustomIcons';
+import { login, saveAuthSession } from '../api/auth';
 
 const Card = styled(MuiCard)(({ theme }) => ({
   display: 'flex',
@@ -60,46 +62,58 @@ const SignInContainer = styled(Stack)(({ theme }) => ({
 }));
 
 export default function SignIn(props: { disableCustomTheme?: boolean }) {
-  const [emailError, setEmailError] = React.useState(false);
-  const [emailErrorMessage, setEmailErrorMessage] = React.useState('');
+  const navigate = useNavigate();
+  const [usernameError, setUsernameError] = React.useState(false);
+  const [usernameErrorMessage, setUsernameErrorMessage] = React.useState('');
   const [passwordError, setPasswordError] = React.useState(false);
   const [passwordErrorMessage, setPasswordErrorMessage] = React.useState('');
-  const [open, setOpen] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
 
-  const handleClickOpen = () => {
-    setOpen(true);
-  };
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitError('');
 
-  const handleClose = () => {
-    setOpen(false);
-  };
-
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    if (emailError || passwordError) {
-      event.preventDefault();
+    if (!validateInputs()) {
       return;
     }
-    const data = new FormData(event.currentTarget);
+
+    const form = event.currentTarget;
+    const username = (form.elements.namedItem('username') as HTMLInputElement).value.trim();
+    const password = (form.elements.namedItem('password') as HTMLInputElement).value;
+
+    setLoading(true);
+    try {
+      const result = await login(username, password);
+      saveAuthSession(result.token, result.user);
+      navigate('/inbox', { replace: true });
+    } catch (err: unknown) {
+      const message =
+        axiosErrorMessage(err) ?? '로그인에 실패했습니다. API 서버 연결을 확인해주세요.';
+      setSubmitError(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const validateInputs = () => {
-    const email = document.getElementById('email') as HTMLInputElement;
+    const username = document.getElementById('username') as HTMLInputElement;
     const password = document.getElementById('password') as HTMLInputElement;
 
     let isValid = true;
 
-    if (!email.value || !/\S+@\S+\.\S+/.test(email.value)) {
-      setEmailError(true);
-      setEmailErrorMessage('Please enter a valid email address.');
+    if (!username.value.trim()) {
+      setUsernameError(true);
+      setUsernameErrorMessage('아이디를 입력해주세요.');
       isValid = false;
     } else {
-      setEmailError(false);
-      setEmailErrorMessage('');
+      setUsernameError(false);
+      setUsernameErrorMessage('');
     }
 
     if (!password.value || password.value.length < 6) {
       setPasswordError(true);
-      setPasswordErrorMessage('Password must be at least 6 characters long.');
+      setPasswordErrorMessage('비밀번호는 최소 6자 이상이어야 합니다.');
       isValid = false;
     } else {
       setPasswordError(false);
@@ -108,6 +122,12 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
 
     return isValid;
   };
+
+  function axiosErrorMessage(err: unknown): string | null {
+    if (typeof err !== 'object' || err === null || !('response' in err)) return null;
+    const response = (err as { response?: { data?: { detail?: string } } }).response;
+    return response?.data?.detail ?? null;
+  }
 
   return (
     <AppTheme {...props}>
@@ -135,20 +155,20 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
             }}
           >
             <FormControl>
-              <FormLabel htmlFor="email">Id</FormLabel>
+              <FormLabel htmlFor="username">Id</FormLabel>
               <TextField
-                error={emailError}
-                helperText={emailErrorMessage}
-                id="email"
-                type="email"
-                name="email"
+                error={usernameError}
+                helperText={usernameErrorMessage}
+                id="username"
+                type="text"
+                name="username"
                 placeholder="your id"
-                autoComplete="email"
+                autoComplete="username"
                 autoFocus
                 required
                 fullWidth
                 variant="outlined"
-                color={emailError ? 'error' : 'primary'}
+                color={usernameError ? 'error' : 'primary'}
               />
             </FormControl>
             <FormControl>
@@ -172,13 +192,19 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
               control={<Checkbox value="remember" color="primary" />}
               label="Remember me"
             />
+            {submitError && (
+              <Typography color="error" variant="body2" sx={{ textAlign: 'center' }}>
+                {submitError}
+              </Typography>
+            )}
             <Button
               type="submit"
               fullWidth
               variant="contained"
+              disabled={loading}
               onClick={validateInputs}
             >
-              Sign in
+              {loading ? 'Signing in...' : 'Sign in'}
             </Button>
           </Box>
         </Card>
