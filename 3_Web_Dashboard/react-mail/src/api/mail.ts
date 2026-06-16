@@ -11,12 +11,15 @@ export type SendMailResult = {
 
 export type UserInfo = {
   id: number;
+  email: string;
   username: string;
 };
 
-export async function findUserByUsername(username: string): Promise<UserInfo | null> {
+export async function findUserByEmail(email: string): Promise<UserInfo | null> {
   try {
-    const res = await axios.get<UserInfo>(`${API_BASE}/users/${username.trim()}`);
+    const res = await axios.get<UserInfo>(`${API_BASE}/users/by-email`, {
+      params: { email: email.trim() },
+    });
     return res.data;
   } catch {
     return null;

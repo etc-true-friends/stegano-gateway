@@ -71,21 +71,28 @@ export default function EmailContent({ email }: Props) {
 
         <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
           <Avatar sx={{ mt: 0.5 }}>{email.sender[0].toUpperCase()}</Avatar>
-          <Box>
-            <Typography level="title-sm">{email.sender}</Typography>
-            <Typography level="body-xs" color="neutral">
-              {formatMailDate(email.date)}
+        <Box>
+          <Typography level="title-sm">
+            {email.sender}{' '}
+            <Typography
+              component="span"
+              level="body-sm"
+              sx={{ color: 'text.secondary' }}
+            >
+              {`<${email.email}>`}
             </Typography>
-          </Box>
+          </Typography>
+
+          <Typography level="body-xs" color="neutral">
+            {formatMailDate(email.date)}
+          </Typography>
+        </Box>
         </Stack>
 
         <Divider sx={{ mb: 3 }} />
 
         <Typography level="body-md" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
           {email.preview}
-          {'\n\n'}안녕하세요,{'\n\n'}
-          이 메일은 보낸 메일함 예시입니다.{'\n\n'}
-          감사합니다.
         </Typography>
       </Box>
 

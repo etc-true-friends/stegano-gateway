@@ -21,12 +21,13 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=64)
+    email: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=1)
 
 
 class LoginUser(BaseModel):
     id: int
+    email: str
     username: str
 
 
@@ -56,10 +57,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored: str) -> bool:
+    if not stored:
+        return False
     try:
         salt, digest = stored.split("$", 1)
     except ValueError:
-        return False
+        return secrets.compare_digest(password, stored)
     return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == digest
 
 
@@ -75,30 +78,51 @@ def init_employee_table() -> None:
             b_deleted CHAR(1) DEFAULT 'N'
         )
     """)
+    columns = {row["name"] for row in cursor.execute("PRAGMA table_info(employee)").fetchall()}
+    if "email" not in columns:
+        cursor.execute("ALTER TABLE employee ADD COLUMN email VARCHAR(255)")
+    cursor.execute(
+        """
+        UPDATE employee
+        SET username = 'admin'
+        WHERE email = 'admin@gmail.com'
+          AND username = 'admin@gmail.com'
+          AND b_deleted = 'N'
+        """
+    )
     conn.commit()
     conn.close()
 
 
 def seed_default_employee() -> None:
-    """테스트용 기본 계정: admin / admin123 (테이블이 비어 있을 때만)"""
+    """테스트용 기본 계정은 직원 테이블이 비어 있을 때만 생성한다."""
     conn = _conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM employee WHERE b_deleted = 'N'")
-    if cursor.fetchone()[0] > 0:
-        conn.close()
-        return
 
-    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute(
-        """
-        INSERT INTO employee (id, username, password, created_at, b_deleted)
-        VALUES (?, ?, ?, ?, 'N')
-        """,
-        (1, "admin", hash_password("admin123"), now),
-    )
+    # 계정이 아예 없으면 기본 admin 생성
+    cursor.execute("SELECT COUNT(*) FROM employee WHERE b_deleted = 'N'")
+    if cursor.fetchone()[0] == 0:
+        now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            """
+            INSERT INTO employee (id, email, username, password, created_at, b_deleted)
+            VALUES (?, ?, ?, ?, ?, 'N')
+            """,
+            (1, "admin@gmail.com", 'admin', hash_password("admin123"), now),
+        )
+        print("[+] Auth: 기본 계정 생성 (admin@gmail.com / admin123)")
+
+        cursor.execute(
+            """
+            INSERT INTO employee (id, email, username, password, created_at, b_deleted)
+            VALUES (?, ?, ?, ?, ?, 'N')
+            """,
+            (2, "test@gmail.com", 'test', hash_password("test123"), now),
+        )
+        print("[+] Auth: 기본 계정 생성 (test@gmail.com / test123)")
+
     conn.commit()
     conn.close()
-    print("[+] Auth: 기본 계정 생성 (admin / admin123)")
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -107,12 +131,12 @@ def login(body: LoginRequest) -> LoginResponse:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, username, password
+        SELECT id, email, username, password
         FROM employee
-        WHERE username = ? AND b_deleted = 'N'
+        WHERE email = ? AND b_deleted = 'N'
         LIMIT 1
         """,
-        (body.username.strip(),),
+        (body.email.strip(),),
     )
     row = cursor.fetchone()
     conn.close()
@@ -124,23 +148,23 @@ def login(body: LoginRequest) -> LoginResponse:
     return LoginResponse(
         success=True,
         token=token,
-        user=LoginUser(id=row["id"], username=row["username"]),
+        user=LoginUser(id=row["id"], email=row["email"], username=row["username"]),
     )
 
 
 @router.get("/me")
-def me(username: str) -> dict:
-    """토큰 검증 전 단계 — username으로 직원 존재 여부 확인 (뼈대)"""
+def me(email: str) -> dict:
+    """토큰 검증 전 단계 — email로 직원 존재 여부 확인 (뼈대)"""
     conn = _conn()
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, username, created_at
+        SELECT id, email, username, created_at
         FROM employee
-        WHERE username = ? AND b_deleted = 'N'
+        WHERE email = ? AND b_deleted = 'N'
         LIMIT 1
         """,
-        (username.strip(),),
+        (email.strip(),),
     )
     row = cursor.fetchone()
     conn.close()
@@ -150,6 +174,7 @@ def me(username: str) -> dict:
 
     return {
         "id": row["id"],
+        "email": row["email"],
         "username": row["username"],
         "created_at": row["created_at"],
     }

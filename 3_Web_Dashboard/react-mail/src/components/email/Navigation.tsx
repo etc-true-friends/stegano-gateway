@@ -11,7 +11,11 @@ import ListItemButton, { listItemButtonClasses } from '@mui/joy/ListItemButton';
 import ListItemContent from '@mui/joy/ListItemContent';
 import Typography from '@mui/joy/Typography';
 import Sheet from '@mui/joy/Sheet';
+import Tooltip from '@mui/joy/Tooltip';
+import { useColorScheme } from '@mui/joy/styles';
+import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import InboxRoundedIcon from '@mui/icons-material/InboxRounded';
+import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
@@ -24,14 +28,17 @@ import { getStoredAuthUser } from '../../api/auth';
 export default function Navigation() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [inboxCount, setInboxCount] = React.useState(12);
+  const { mode, systemMode, setMode } = useColorScheme();
+  const [inboxCount, setInboxCount] = React.useState(0);
+  const resolvedMode = mode === 'system' ? systemMode : mode;
+  const isDarkMode = resolvedMode === 'dark';
 
   React.useEffect(() => {
     const load = async () => {
       const user = getStoredAuthUser();
-      const username = user?.username ?? 'admin';
+      const email = user?.email ?? 'admin@gmail.com';
       try {
-        const res = await fetchInboxCount(username);
+        const res = await fetchInboxCount(email);
         setInboxCount(res.inboxCount);
       } catch {
         // 기본값(12)을 유지
@@ -130,18 +137,7 @@ export default function Navigation() {
               </ListItemContent>
             </ListItemButton>
           </ListItem>
-
-          <ListItem>
-            <ListItemButton
-              selected={location.pathname === '/trash'}
-              onClick={() => navigate('/trash')}
-            >
-              <MaterialIcon><DeleteRoundedIcon /></MaterialIcon>
-              <ListItemContent>
-                <Typography level="title-sm">휴지통</Typography>
-              </ListItemContent>
-            </ListItemButton>
-          </ListItem>
+          
         </List>
       </Box>
 
@@ -150,9 +146,22 @@ export default function Navigation() {
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
         <Avatar variant="outlined" size="sm" src="" />
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography level="title-sm">관리자</Typography>
-          <Typography level="body-xs">admin@etcfriends.com</Typography>
+          <Typography level="title-sm">{getStoredAuthUser()?.username ?? 'admin'}</Typography>
+          <Typography level="body-xs">{getStoredAuthUser()?.email ?? 'admin@gmail.com'}</Typography>
         </Box>
+        <Tooltip title={isDarkMode ? '라이트 모드' : '다크 모드'}>
+          <IconButton
+            size="sm"
+            variant="plain"
+            color="neutral"
+            onClick={() => setMode(isDarkMode ? 'light' : 'dark')}
+            aria-label={isDarkMode ? '라이트 모드로 변경' : '다크 모드로 변경'}
+          >
+            <MaterialIcon>
+              {isDarkMode ? <LightModeRoundedIcon /> : <DarkModeRoundedIcon />}
+            </MaterialIcon>
+          </IconButton>
+        </Tooltip>
         <IconButton size="sm" variant="plain" color="neutral">
           <MaterialIcon><LogoutRoundedIcon /></MaterialIcon>
         </IconButton>
