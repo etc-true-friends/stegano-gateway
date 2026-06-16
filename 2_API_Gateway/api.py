@@ -756,21 +756,48 @@ async def send_mail(
 # ─────────────────────────────────────────────────
 @app.get("/mails")
 async def get_mails(type: str = "inbox"):
+    mailbox_type = type.upper()
+
+    if mailbox_type == "INBOX":
+        mailbox_type = "INBOX"
+    elif mailbox_type == "sent":
+        mailbox_type = "SENT"
+
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            m.id AS mailId,
+            e.username AS sender,
+            m.subject AS subject,
+            m.created_at AS createdAt,
+            CASE
+                WHEN COUNT(a.id) > 0 THEN 1
+                ELSE 0
+            END AS hasAttachment
+        FROM mail m
+        JOIN mailbox mb ON m.mailbox_id = mb.id
+        JOIN employee e ON m.sender_id = e.id
+        LEFT JOIN mail_attachment a ON m.id = a.mail_id
+        WHERE mb.type = ?
+        GROUP BY m.id
+        ORDER BY m.created_at DESC
+    """, (mailbox_type,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
     return [
         {
-            "mailId": 1,
-            "sender": "admin",
-            "subject": "테스트 메일",
-            "hasAttachment": True,
-            "createdAt": "2026-06-15T10:00:00"
-        },
-        {
-            "mailId": 2,
-            "sender": "system",
-            "subject": "스캔 결과",
-            "hasAttachment": False,
-            "createdAt": "2026-06-15T11:00:00"
+            "mailId": row["mailId"],
+            "sender": row["sender"],
+            "subject": row["subject"],
+            "hasAttachment": bool(row["hasAttachment"]),
+            "createdAt": row["createdAt"]
         }
+        for row in rows
     ]
 
 
@@ -984,18 +1011,52 @@ async def mark_mail_as_read(mail_id: int):
 # ─────────────────────────────────────────────────
 @app.get("/mails/{mail_id}")
 async def get_mail_detail(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            m.id AS mailId,
+            sender.username AS sender,
+            receiver.username AS receiver,
+            m.subject AS subject,
+            m.body AS body,
+            m.created_at AS createdAt
+        FROM mail m
+        JOIN employee sender ON m.sender_id = sender.id
+        JOIN mailbox mb ON m.mailbox_id = mb.id
+        JOIN employee receiver ON mb.employee_id = receiver.id
+        WHERE m.id = ?
+        LIMIT 1
+    """, (mail_id,))
+
+    mail = cursor.fetchone()
+
+    if mail is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="메일을 찾을 수 없습니다.")
+
+    cursor.execute("""
+        SELECT
+            id AS attachmentId,
+            original_file_name AS fileName
+        FROM mail_attachment
+        WHERE mail_id = ?
+        ORDER BY id ASC
+    """, (mail_id,))
+
+    attachments = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
     return {
-        "mailId": mail_id,
-        "sender": "admin",
-        "receiver": "user",
-        "subject": "테스트 메일",
-        "body": "첨부파일 확인 바랍니다.",
-        "attachments": [
-            {
-                "attachmentId": 10,
-                "fileName": "sample.png"
-            }
-        ]
+        "mailId": mail["mailId"],
+        "sender": mail["sender"],
+        "receiver": mail["receiver"],
+        "subject": mail["subject"],
+        "body": mail["body"],
+        "createdAt": mail["createdAt"],
+        "attachments": attachments
     }
 
 
@@ -1005,25 +1066,136 @@ async def get_mail_detail(mail_id: int):
 # ─────────────────────────────────────────────────
 @app.get("/attachments/{attachment_id}/download")
 async def download_attachment(attachment_id: int):
-    from fastapi.responses import FileResponse
-    import os
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
 
-    file_path = "uploads/sample.png"
+    cursor.execute("""
+        SELECT
+            original_file_name,
+            stored_path,
+            mime_type
+        FROM mail_attachment
+        WHERE id = ?
+        LIMIT 1
+    """, (attachment_id,))
 
-    if not os.path.exists(file_path):
-        return {
-            "success": False,
-            "message": "Attachment not found",
-            "attachmentId": attachment_id
-        }
+    attachment = cursor.fetchone()
+    conn.close()
+
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="첨부파일을 찾을 수 없습니다.")
+
+    stored_path = attachment["stored_path"]
+
+    if not os.path.exists(stored_path):
+        raise HTTPException(status_code=404, detail="첨부파일 파일이 서버에 존재하지 않습니다.")
 
     return FileResponse(
-        path=file_path,
-        media_type="image/png",
-        filename="sample.png"
+        path=stored_path,
+        media_type=attachment["mime_type"] or "application/octet-stream",
+        filename=attachment["original_file_name"]
     )
 
+# ─────────────────────────────────────────────────
+# 위협 현황 조회
+# GET /threats
+# ─────────────────────────────────────────────────
+@app.get("/threats")
+async def get_threats():
 
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM audit_logs
+        WHERE risk_level IN ('HIGH','MEDIUM')
+    """)
+    threats = [dict(row) for row in cursor.fetchall()]
+
+    high_risk = sum(
+        1 for t in threats
+        if t["risk_level"] == "HIGH"
+    )
+
+    medium_risk = sum(
+        1 for t in threats
+        if t["risk_level"] == "MEDIUM"
+    )
+
+    blocked_files = sum(
+        1 for t in threats
+        if t["action"] == "QUARANTINE"
+    )
+
+    conn.close()
+
+    return {
+        "totalThreats": len(threats),
+        "highRisk": high_risk,
+        "mediumRisk": medium_risk,
+        "blockedFiles": blocked_files,
+        "recentThreats": threats[-10:]
+    }
+
+
+# ─────────────────────────────────────────────────
+# CDR 처리 현황 조회
+# GET /cdr/status
+# audit_logs 테이블 기반으로 CDR 처리 현황 집계
+# ─────────────────────────────────────────────────
+@app.get("/cdr/status")
+async def get_cdr_status():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM audit_logs
+        WHERE action IN ('BYPASS', 'QUARANTINE', 'ARCHIVE_BYPASS', 'ARCHIVE_QUARANTINE')
+        ORDER BY timestamp DESC
+    """)
+    cdr_logs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    total_processed = len(cdr_logs)
+
+    sanitized_logs = [
+        log for log in cdr_logs
+        if log["action"] in ("BYPASS", "ARCHIVE_BYPASS")
+    ]
+
+    failed_logs = [
+        log for log in cdr_logs
+        if log["action"] in ("FAILED", "CDR_FAILED")
+    ]
+
+    success_rate = (
+        round((len(sanitized_logs) / total_processed) * 100, 1)
+        if total_processed > 0
+        else 0.0
+    )
+
+    recent_cdr_logs = [
+        {
+            "id": log["id"],
+            "fileName": log["original_name"],
+            "status": log["action"],
+            "processedAt": log["timestamp"]
+        }
+        for log in cdr_logs[:10]
+    ]
+
+    return {
+        "totalProcessed": total_processed,
+        "sanitized": len(sanitized_logs),
+        "failed": len(failed_logs),
+        "successRate": success_rate,
+        "recentCdrLogs": recent_cdr_logs
+    }
 
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)
