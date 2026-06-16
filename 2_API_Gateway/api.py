@@ -750,6 +750,76 @@ async def send_mail(
         "attachments": saved_attachments,
     }
 
+# ─────────────────────────────────────────────────
+# 메일 목록 조회
+# GET /mails?type=inbox
+# ─────────────────────────────────────────────────
+@app.get("/mails")
+async def get_mails(type: str = "inbox"):
+    return [
+        {
+            "mailId": 1,
+            "sender": "admin",
+            "subject": "테스트 메일",
+            "hasAttachment": True,
+            "createdAt": "2026-06-15T10:00:00"
+        },
+        {
+            "mailId": 2,
+            "sender": "system",
+            "subject": "스캔 결과",
+            "hasAttachment": False,
+            "createdAt": "2026-06-15T11:00:00"
+        }
+    ]
+
+
+# ─────────────────────────────────────────────────
+# 메일 상세 조회
+# GET /mails/{id}
+# ─────────────────────────────────────────────────
+@app.get("/mails/{mail_id}")
+async def get_mail_detail(mail_id: int):
+    return {
+        "mailId": mail_id,
+        "sender": "admin",
+        "receiver": "user",
+        "subject": "테스트 메일",
+        "body": "첨부파일 확인 바랍니다.",
+        "attachments": [
+            {
+                "attachmentId": 10,
+                "fileName": "sample.png"
+            }
+        ]
+    }
+
+
+# ─────────────────────────────────────────────────
+# 첨부파일 다운로드
+# GET /attachments/{id}/download
+# ─────────────────────────────────────────────────
+@app.get("/attachments/{attachment_id}/download")
+async def download_attachment(attachment_id: int):
+    from fastapi.responses import FileResponse
+    import os
+
+    file_path = "uploads/sample.png"
+
+    if not os.path.exists(file_path):
+        return {
+            "success": False,
+            "message": "Attachment not found",
+            "attachmentId": attachment_id
+        }
+
+    return FileResponse(
+        path=file_path,
+        media_type="image/png",
+        filename="sample.png"
+    )
+
+
 
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)
