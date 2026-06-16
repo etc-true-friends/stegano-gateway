@@ -18,10 +18,36 @@ import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../../assets/logo.png';
 import MaterialIcon from './MaterialIcon';
+import { fetchInboxCount } from '../../api/mailbox';
+import { getStoredAuthUser } from '../../api/auth';
 
 export default function Navigation() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [inboxCount, setInboxCount] = React.useState(12);
+
+  React.useEffect(() => {
+    const load = async () => {
+      const user = getStoredAuthUser();
+      const username = user?.username ?? 'admin';
+      try {
+        const res = await fetchInboxCount(username);
+        setInboxCount(res.inboxCount);
+      } catch {
+        // 기본값(12)을 유지
+      }
+    };
+    load();
+  }, []);
+
+  React.useEffect(() => {
+    const handleInboxRead = () => {
+      setInboxCount((count) => Math.max(0, count - 1));
+    };
+
+    window.addEventListener('mailbox:inbox-read', handleInboxRead);
+    return () => window.removeEventListener('mailbox:inbox-read', handleInboxRead);
+  }, []);
 
   return (
     <Sheet
@@ -87,7 +113,7 @@ export default function Navigation() {
                 <Typography level="title-sm">받은 메일함</Typography>
               </ListItemContent>
               <Chip size="sm" color="primary" variant="solid">
-                12
+                {inboxCount}
               </Chip>
             </ListItemButton>
           </ListItem>

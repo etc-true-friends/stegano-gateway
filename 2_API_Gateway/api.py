@@ -775,6 +775,210 @@ async def get_mails(type: str = "inbox"):
 
 
 # ─────────────────────────────────────────────────
+# 메일 목록 조회 (test.db 기반: 받은 메일 -- 기본 뼈대 로직은 /mails/sent와 동일하게 처리합니다!)
+# GET /mails/sent?username=admin
+# ─────────────────────────────────────────────────
+@app.get("/mails/inbox")
+async def get_inbox_mails(username: str = "admin"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
+        (username.strip(),),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    rows = cur.execute(
+        """
+        SELECT
+          m.id,
+          m.subject,
+          m.body,
+          m.status,
+          m.sent_at,
+          e.username AS sender_username
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        JOIN employee e ON e.id = m.sender_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'INBOX'
+          AND m.b_deleted = 'N'
+        ORDER BY m.id DESC
+        """,
+        (employee_id,),
+    ).fetchall()
+
+    colors = ["primary.softBg", "success.softBg", "warning.softBg", "danger.softBg"]
+    result = []
+    for idx, r in enumerate(rows):
+        rawBody = (r["body"] or "").strip()
+        preview = rawBody.replace("\r\n", " ").replace("\n", " ")
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+
+        result.append(
+            {
+                "id": r["id"],
+                "sender": r["sender_username"] or "",
+                "subject": r["subject"] or "",
+                "preview": preview or (r["subject"] or ""),
+                "date": r["sent_at"] or "",
+                "unread": r["status"] == "SENT",
+                "avatarColor": colors[idx % len(colors)],
+            }
+        )
+
+    conn.close()
+    return result
+
+# ─────────────────────────────────────────────────
+# 메일 목록 조회 (test.db 기반: 보낸 메일)
+# GET /mails/sent?username=admin
+# ─────────────────────────────────────────────────
+@app.get("/mails/sent")
+async def get_sent_mails(username: str = "admin"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
+        (username.strip(),),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    rows = cur.execute(
+        """
+        SELECT
+          m.id,
+          m.subject,
+          m.body,
+          m.status,
+          m.sent_at,
+          e.username AS sender_username
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        JOIN employee e ON e.id = m.sender_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'SENT'
+          AND m.b_deleted = 'N'
+        ORDER BY m.id DESC
+        """,
+        (employee_id,),
+    ).fetchall()
+
+    colors = ["primary.softBg", "success.softBg", "warning.softBg", "danger.softBg"]
+    result = []
+    for idx, r in enumerate(rows):
+        rawBody = (r["body"] or "").strip()
+        preview = rawBody.replace("\r\n", " ").replace("\n", " ")
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+
+        result.append(
+            {
+                "id": r["id"],
+                "sender": r["sender_username"] or "",
+                "subject": r["subject"] or "",
+                "preview": preview or (r["subject"] or ""),
+                "date": r["sent_at"] or "",
+                "unread": False,
+                "avatarColor": colors[idx % len(colors)],
+            }
+        )
+
+    conn.close()
+    return result
+
+
+# ─────────────────────────────────────────────────
+# 받은 메일함 count 조회 (test.db 기반)
+# GET /mails/inbox/count?username=admin
+# ─────────────────────────────────────────────────
+@app.get("/mails/inbox/count")
+async def get_inbox_count(username: str = "admin"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
+        (username.strip(),),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    cnt = cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'INBOX'
+          AND m.b_deleted = 'N'
+          AND m.status = 'SENT'
+        """,
+        (employee_id,),
+    ).fetchone()[0]
+
+    conn.close()
+    return {"inboxCount": int(cnt)}
+
+
+# ─────────────────────────────────────────────────
+# 받은 메일 읽음 처리
+# PATCH /mails/{mail_id}/read
+# ─────────────────────────────────────────────────
+@app.patch("/mails/{mail_id}/read")
+async def mark_mail_as_read(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE mail
+        SET status = 'READ'
+        WHERE
+          id = ?
+          AND b_deleted = 'N'
+          AND mailbox_id IN (
+            SELECT id
+            FROM mailbox
+            WHERE type = 'INBOX'
+          )
+        """,
+        (mail_id,),
+    )
+
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="읽음 처리할 받은 메일을 찾을 수 없습니다.")
+
+    conn.commit()
+    conn.close()
+    return {"id": mail_id, "status": "READ"}
+
+
+# ─────────────────────────────────────────────────
 # 메일 상세 조회
 # GET /mails/{id}
 # ─────────────────────────────────────────────────

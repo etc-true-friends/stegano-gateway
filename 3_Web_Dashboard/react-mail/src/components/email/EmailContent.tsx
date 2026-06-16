@@ -12,6 +12,7 @@ import ReplyAllRoundedIcon from '@mui/icons-material/ReplyAllRounded';
 import ReplyRoundedIcon from '@mui/icons-material/ReplyRounded';
 import type { Email } from './EmailList';
 import MaterialIcon from './MaterialIcon';
+import { formatMailDate } from '../../utils/formatMailDate';
 
 type Props = {
   email: Email | null;
@@ -73,7 +74,7 @@ export default function EmailContent({ email }: Props) {
           <Box>
             <Typography level="title-sm">{email.sender}</Typography>
             <Typography level="body-xs" color="neutral">
-              {email.date}
+              {formatMailDate(email.date)}
             </Typography>
           </Box>
         </Stack>
