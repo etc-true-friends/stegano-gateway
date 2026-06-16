@@ -17,60 +17,33 @@ import EmailList, { type Email } from '../components/email/EmailList';
 import EmailContent from '../components/email/EmailContent';
 import ComposeModal from '../components/email/ComposeModal';
 import MaterialIcon from '../components/email/MaterialIcon';
+import { fetchSentMails } from '../api/mailbox';
+import { getStoredAuthUser } from '../api/auth';
 
-const SENT_EMAILS: Email[] = [
-  {
-    id: 1,
-    sender: '홍길동',
-    subject: '프로젝트 진행 현황 보고',
-    preview: '안녕하세요, 이번 주 프로젝트 진행 현황을 보고 드립니다. 현재 백엔드 API 연동 작업이 70% 완료되었으며...',
-    date: '오늘 10:30',
-    unread: false,
-    avatarColor: 'primary.softBg',
-  },
-  {
-    id: 2,
-    sender: '김철수',
-    subject: '[공지] 주간 미팅 일정 안내',
-    preview: '안녕하세요. 이번 주 금요일 오후 3시에 주간 미팅이 예정되어 있습니다. 준비 자료를 미리 공유해 주시기 바랍니다.',
-    date: '어제 15:22',
-    unread: false,
-    avatarColor: 'success.softBg',
-  },
-  {
-    id: 3,
-    sender: '이영희',
-    subject: '이미지 스테가노그래피 분석 결과',
-    preview: '첨부 파일에 분석 결과를 정리해 두었습니다. 총 5개의 이미지에서 숨겨진 데이터가 발견되었으며...',
-    date: '2일 전',
-    unread: false,
-    avatarColor: 'warning.softBg',
-  },
-  {
-    id: 4,
-    sender: 'security@example.com',
-    subject: '보안 감사 보고서 제출',
-    preview: '지난 분기 보안 감사 결과를 첨부 파일로 제출합니다. 검토 후 피드백 부탁드립니다.',
-    date: '3일 전',
-    unread: false,
-    avatarColor: 'danger.softBg',
-  },
-  {
-    id: 5,
-    sender: '박민준',
-    subject: 'API 명세서 검토 요청',
-    preview: '안녕하세요. 스테가노그래피 게이트웨이 API 명세서 초안을 작성하였습니다. 검토 부탁드립니다.',
-    date: '4일 전',
-    unread: false,
-  },
-];
+const SENT_EMAILS: Email[] = [];
 
 export default function SentMail() {
+  const [emails, setEmails] = React.useState<Email[]>(SENT_EMAILS);
   const [selectedEmail, setSelectedEmail] = React.useState<Email | null>(SENT_EMAILS[0]);
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
-  const filtered = SENT_EMAILS.filter(
+  React.useEffect(() => {
+    const load = async () => {
+      const user = getStoredAuthUser();
+      const username = user?.username ?? 'admin';
+      try {
+        const data = await fetchSentMails(username);
+        setEmails(data as Email[]);
+        setSelectedEmail(data[0] ?? null);
+      } catch {
+        // API 실패 시 기존 더미 데이터 유지
+      }
+    };
+    load();
+  }, []);
+
+  const filtered = emails.filter(
     (e) =>
       e.sender.includes(search) ||
       e.subject.includes(search) ||
