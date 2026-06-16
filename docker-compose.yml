@@ -35,7 +35,7 @@ services:
     build:
       context: ./3_Web_Dashboard/react-dashboard
       args:
-         - VITE_API_BASE=http://3.88.139.96:8000
+        - VITE_API_BASE=${VITE_API_BASE:-http://3.88.139.96:8000}
     container_name: stegano-react-dashboard
     ports:
       - "3000:80"
@@ -47,7 +47,7 @@ services:
     build:
       context: ./3_Web_Dashboard/react-mail
       args:
-         - VITE_API_BASE=http://3.88.139.96:8000
+        - VITE_API_BASE=${VITE_API_BASE:-http://3.88.139.96:8000}
     container_name: stegano-react-mail
     ports:
       - "3001:80"

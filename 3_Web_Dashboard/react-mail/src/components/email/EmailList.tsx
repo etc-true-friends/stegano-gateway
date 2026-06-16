@@ -9,6 +9,7 @@ import Stack from '@mui/joy/Stack';
 import Typography from '@mui/joy/Typography';
 import CircleIcon from '@mui/icons-material/Circle';
 import MaterialIcon from './MaterialIcon';
+import { formatMailDate } from '../../utils/formatMailDate';
 
 export type Email = {
   id: number;
@@ -59,7 +60,7 @@ export default function EmailList({ emails, selectedId, onSelect }: Props) {
                       {email.sender}
                     </Typography>
                     <Typography level="body-xs" sx={{ flexShrink: 0, ml: 1 }}>
-                      {email.date}
+                      {formatMailDate(email.date)}
                     </Typography>
                   </Box>
                   <Typography level="body-xs" noWrap>
