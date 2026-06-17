@@ -878,6 +878,7 @@ async def send_mail(
         "sent_at": now,
         "attachments": saved_attachments,
     }
+
 # ─────────────────────────────────────────────────
 # 메일 목록 조회
 # GET /mails?type=inbox
@@ -1120,7 +1121,6 @@ async def get_inbox_count(email: str = "admin@gmail.com"):
     conn.close()
     return {"inboxCount": int(cnt)}
 
-
 # ─────────────────────────────────────────────────
 # 받은 메일 읽음 처리
 # PATCH /mails/{mail_id}/read
@@ -1209,6 +1209,31 @@ async def get_mail_detail(mail_id: int):
         "attachments": attachments
     }
 
+# ─────────────────────────────────────────────────
+# 메일 삭제
+# DELETE /mails/{id}
+# ─────────────────────────────────────────────────
+@app.delete("/mails/{mail_id}")
+async def delete_mail(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE mail
+        SET b_deleted = 'Y'
+        WHERE id = ?
+        """,
+        (mail_id,),
+    )
+
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="처리할 메일을 찾을 수 없습니다.")
+
+    conn.commit()
+    conn.close()
+    return {"id": mail_id, "status": "DELETE"}
 
 # ─────────────────────────────────────────────────
 # 첨부파일 다운로드

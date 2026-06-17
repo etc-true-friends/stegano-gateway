@@ -17,12 +17,14 @@ import type { Email } from './EmailList';
 import MaterialIcon from './MaterialIcon';
 import { formatMailDate } from '../../utils/formatMailDate';
 import { fetchMailDetail, fetchAttachmentDownloadUrl, type Attachment } from '../../api/mailbox';
+import { deleteMail } from '../../api/mail';
 
 type Props = {
   email: Email | null;
+  onDeleted?: (mailBoxId: number) => void;
 };
 
-export default function EmailContent({ email }: Props) {
+export default function EmailContent({ email, onDeleted }: Props) {
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [body, setBody] = React.useState<string>('');
   const [downloading, setDownloading] = React.useState<number | null>(null);
@@ -36,6 +38,12 @@ export default function EmailContent({ email }: Props) {
       setBody(detail.body);
     }).catch(() => {});
   }, [email?.id]);
+
+  const handleDelete = async () => {
+    if (!email) return;
+    const { id } = await deleteMail(email.id);
+    onDeleted?.(id);
+  };
 
   const handleDownload = async (attachment: Attachment) => {
     setDownloading(attachment.attachmentId);
@@ -87,7 +95,13 @@ export default function EmailContent({ email }: Props) {
           전달
         </Button>
         <Box sx={{ flex: 1 }} />
-        <Button variant="plain" color="danger" size="sm" startDecorator={<MaterialIcon><DeleteRoundedIcon /></MaterialIcon>}>
+        <Button
+          variant="plain"
+          color="danger"
+          size="sm"
+          startDecorator={<MaterialIcon><DeleteRoundedIcon /></MaterialIcon>}
+          onClick={handleDelete}
+        >
           삭제
         </Button>
       </Box>

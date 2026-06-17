@@ -36,6 +36,16 @@ export async function findUserByEmail(email: string): Promise<UserInfo | null> {
   }
 }
 
+/**
+ * @function 메일 삭제 (정확히는 메일함 삭제입니다.)
+ * @param mailBoxId (메일 고유번호)
+ * @returns
+ */
+export async function deleteMail(mailBoxId: number): Promise<{ id: number }> {
+  const res = await axios.delete<{ id: number }>(`${API_BASE}/mails/${mailBoxId}`);
+  return res.data;
+}
+
 async function scanAttachment(file: File): Promise<ScanResult> {
   const form = new FormData();
   form.append('file', file);
@@ -55,7 +65,6 @@ export async function sendMail(params: {
 }): Promise<SendMailResult> {
   const { senderId, recipientId, subject, body, attachments, parentMailId = 0 } = params;
 
-  // 첨부파일 스캔 (서버에 저장까지 완료됨)
   let status: 'SENT' | 'BLOCKED' = 'SENT';
   const scannedFiles: ScanResult[] = [];
 
@@ -78,7 +87,6 @@ export async function sendMail(params: {
   form.append('status', status);
   form.append('parent_mail_id', String(parentMailId));
 
-  // 파일 재전송 없이 scan 단계에서 받은 메타데이터만 전달
   if (cleanFiles.length > 0) {
     form.append('attachment_ids', JSON.stringify(cleanFiles.map(f => f.file_id)));
     form.append('attachment_filenames', JSON.stringify(cleanFiles.map(f => f.original_filename)));
