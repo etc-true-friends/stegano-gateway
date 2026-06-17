@@ -60,8 +60,8 @@ export async function sendMail(params: {
   }
 
   const form = new FormData();
-  form.append('sender_id', String(senderId));
-  form.append('recipient_id', String(recipientId));
+  form.append('sender', String(senderId));
+  form.append('recipient', String(recipientId));
   form.append('subject', subject);
   form.append('body', body);
   form.append('status', status);
