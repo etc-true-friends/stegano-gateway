@@ -8,17 +8,24 @@ import Typography from '@mui/joy/Typography';
 import Sheet from '@mui/joy/Sheet';
 import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
 import ForwardToInboxRoundedIcon from '@mui/icons-material/ForwardToInboxRounded';
-import ReplyAllRoundedIcon from '@mui/icons-material/ReplyAllRounded';
 import ReplyRoundedIcon from '@mui/icons-material/ReplyRounded';
 import type { Email } from './EmailList';
 import MaterialIcon from './MaterialIcon';
 import { formatMailDate } from '../../utils/formatMailDate';
+import { deleteMail } from '../../api/mail';
 
 type Props = {
   email: Email | null;
+  onDeleted?: (mailBoxId: number) => void;
 };
 
-export default function EmailContent({ email }: Props) {
+export default function EmailContent({ email, onDeleted }: Props) {
+  const handleDelete = async () => {
+    if (!email) return;
+    const { id } = await deleteMail(email.id);
+    onDeleted?.(id);
+  };
+
   if (!email) {
     return (
       <Sheet
@@ -57,7 +64,13 @@ export default function EmailContent({ email }: Props) {
           전달
         </Button>
         <Box sx={{ flex: 1 }} />
-        <Button variant="plain" color="danger" size="sm" startDecorator={<MaterialIcon><DeleteRoundedIcon /></MaterialIcon>}>
+        <Button
+          variant="plain"
+          color="danger"
+          size="sm"
+          startDecorator={<MaterialIcon><DeleteRoundedIcon /></MaterialIcon>}
+          onClick={handleDelete}
+        >
           삭제
         </Button>
       </Box>
@@ -71,22 +84,22 @@ export default function EmailContent({ email }: Props) {
 
         <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
           <Avatar sx={{ mt: 0.5 }}>{email.sender[0].toUpperCase()}</Avatar>
-        <Box>
-          <Typography level="title-sm">
-            {email.sender}{' '}
-            <Typography
-              component="span"
-              level="body-sm"
-              sx={{ color: 'text.secondary' }}
-            >
-              {`<${email.email}>`}
+          <Box>
+            <Typography level="title-sm">
+              {email.sender}{' '}
+              <Typography
+                component="span"
+                level="body-sm"
+                sx={{ color: 'text.secondary' }}
+              >
+                {`<${email.email}>`}
+              </Typography>
             </Typography>
-          </Typography>
 
-          <Typography level="body-xs" color="neutral">
-            {formatMailDate(email.date)}
-          </Typography>
-        </Box>
+            <Typography level="body-xs" color="neutral">
+              {formatMailDate(email.date)}
+            </Typography>
+          </Box>
         </Stack>
 
         <Divider sx={{ mb: 3 }} />

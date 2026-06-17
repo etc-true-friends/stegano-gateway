@@ -26,6 +26,16 @@ export async function findUserByEmail(email: string): Promise<UserInfo | null> {
   }
 }
 
+/**
+ * @function 메일 삭제 (정확히는 메일함 삭제입니다.)
+ * @param mailBoxId (메일 고유번호)
+ * @returns 
+ */
+export async function deleteMail(mailBoxId: number): Promise<{ id: number }> {
+  const res = await axios.delete<{ id: number }>(`${API_BASE}/mails/${mailBoxId}`);
+  return res.data;
+}
+
 async function scanAttachment(file: File): Promise<ScanVerdict> {
   const form = new FormData();
   form.append('file', file);
