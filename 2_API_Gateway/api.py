@@ -661,18 +661,54 @@ def get_user_by_email(email: str):
 # ─────────────────────────────────────────────────
 @app.post("/mails/send")
 async def send_mail(
-    sender_id: int = Form(...),
-    recipient_id: int = Form(...),
-    subject: str = Form(...),
-    body: str = Form(""),
-    status: str = Form("SENT"),
-    parent_mail_id: int = Form(0),
-    attachments: list[UploadFile] = File(default=[]),
+        sender: str = Form(...),
+        recipient: str = Form(...),
+        subject: str = Form(...),
+        body: str = Form(""),
+        status: str = Form("SENT"),
+        parent_mail_id: int | None = Form(None),
+        attachments: list[UploadFile] = File(default=[]),
 ):
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
+    sender_value = sender.strip()
+    recipient_value = recipient.strip()
+
     conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
+    # 발신자 username 조회
+    cursor.execute("""
+        SELECT id, username
+        FROM employee
+        WHERE username = ?
+          AND b_deleted = 'N'
+        LIMIT 1
+    """, (sender_value,))
+    sender_row = cursor.fetchone()
+
+    if sender_row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="발신자를 찾을 수 없습니다.")
+
+    sender_id = sender_row["id"]
+
+    # 수신자 username 조회
+    cursor.execute("""
+        SELECT id, username
+        FROM employee
+        WHERE username = ?
+          AND b_deleted = 'N'
+        LIMIT 1
+    """, (recipient_value,))
+    recipient_row = cursor.fetchone()
+
+    if recipient_row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="수신자를 찾을 수 없습니다.")
+
+    recipient_id = recipient_row["id"]
 
     # 발신자 SENT 메일함 조회, 없으면 생성
     cursor.execute(
@@ -681,7 +717,7 @@ async def send_mail(
     )
     row = cursor.fetchone()
     if row:
-        mailbox_id = row[0]
+        mailbox_id = row["id"]
     else:
         cursor.execute(
             "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'SENT', ?)",
@@ -696,7 +732,7 @@ async def send_mail(
     )
     row = cursor.fetchone()
     if row:
-        inbox_id = row[0]
+        inbox_id = row["id"]
     else:
         cursor.execute(
             "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'INBOX', ?)",
@@ -724,17 +760,27 @@ async def send_mail(
     for attachment in attachments:
         if not attachment.filename:
             continue
+
         file_id = str(uuid.uuid4())[:8]
         safe_name = _safe_disk_name(attachment.filename)
         stored_path = os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
         contents = await attachment.read()
+
         with open(stored_path, "wb") as f:
             f.write(contents)
 
         cursor.execute("""
             INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (mail_id, attachment.filename, stored_path, len(contents), attachment.content_type, now))
+        """, (
+            mail_id,
+            attachment.filename,
+            stored_path,
+            len(contents),
+            attachment.content_type,
+            now
+        ))
+
         saved_attachments.append({
             "original_file_name": attachment.filename,
             "file_size": len(contents),
@@ -746,7 +792,10 @@ async def send_mail(
 
     return {
         "id": mail_id,
+        "sender": sender_value,
+        "recipient": recipient_value,
         "sender_id": sender_id,
+        "recipient_id": recipient_id,
         "mailbox_id": mailbox_id,
         "subject": subject,
         "body": body,
@@ -754,7 +803,6 @@ async def send_mail(
         "sent_at": now,
         "attachments": saved_attachments,
     }
-
 # ─────────────────────────────────────────────────
 # 메일 목록 조회
 # GET /mails?type=inbox
