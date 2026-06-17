@@ -661,7 +661,7 @@ async def send_mail(
         subject: str = Form(...),
         body: str = Form(""),
         status: str = Form("SENT"),
-        parent_mail_id: int | None = Form(None),
+        parent_mail_id: int = Form(0),
         attachments: list[UploadFile] = File(default=[]),
 ):
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
