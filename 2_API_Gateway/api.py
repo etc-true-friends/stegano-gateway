@@ -828,11 +828,13 @@ async def send_mail(
     mail_id = cursor.lastrowid
 
     # SENT인 경우에만 수신자 INBOX에도 저장
+    inbox_mail_id = None
     if final_status == "SENT":
         cursor.execute("""
             INSERT INTO mail (sender_id, mailbox_id, parent_mail_id, subject, body, status, sent_at, created_at)
             VALUES (?, ?, ?, ?, ?, 'SENT', ?, ?)
         """, (sender_id, inbox_id, parent_mail_id, subject, body, now, now))
+        inbox_mail_id = cursor.lastrowid
 
     # 스캔 단계에서 저장된 파일을 file_id 기반으로 mail_attachment에 매핑
     saved_attachments = []
@@ -851,10 +853,19 @@ async def send_mail(
             sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_sanitized.jpg")
             stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
+            # 발신자 SENT에 첨부파일 매핑
             cursor.execute("""
                 INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
+
+            # 수신자 INBOX에도 동일하게 첨부파일 매핑
+            if inbox_mail_id:
+                cursor.execute("""
+                    INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
+
             saved_attachments.append({
                 "file_id": file_id,
                 "original_file_name": original_filename,
