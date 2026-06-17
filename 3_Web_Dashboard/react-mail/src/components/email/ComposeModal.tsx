@@ -23,7 +23,7 @@ import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRound
 import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import MaterialIcon from './MaterialIcon';
-import { sendMail, findUserByUsername, UserInfo } from '../../api/mail';
+import { sendMail, findUserByEmail, UserInfo } from '../../api/mail';
 import { getStoredAuthUser } from '../../api/auth';
 
 type Props = {
@@ -51,7 +51,7 @@ export default function ComposeModal({ open, onClose }: Props) {
   const handleToBlur = async () => {
     setToTouched(true);
     if (!to.trim()) return;
-    const user = await findUserByUsername(to.trim());
+    const user = await findUserByEmail(to.trim());
     if (user) {
       setToUser(user);
       setToNotFound(false);
@@ -182,7 +182,7 @@ export default function ComposeModal({ open, onClose }: Props) {
           <FormControl error={toError}>
             <FormLabel>받는 사람</FormLabel>
             <Input
-              placeholder="username 입력"
+              placeholder="email 입력"
               value={to}
               onChange={handleToChange}
               onBlur={handleToBlur}

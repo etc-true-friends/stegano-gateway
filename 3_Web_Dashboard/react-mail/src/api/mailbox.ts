@@ -10,6 +10,7 @@ const api = axios.create({
 
 export type MailListItem = {
   id: number;
+  email: string;
   sender: string;
   subject: string;
   preview: string;
@@ -25,12 +26,12 @@ export type InboxCountResponse = {
 /**
  * @function 받은 메일함 리스트
  * @writer jhm
- * @param username (유저명 -> 후에 세션 작업 정리되면 고유값 [id]로 변경할 예정입니다)
+ * @param email 로그인한 사용자의 이메일
  * @returns 
  */
-export async function fetchInboxMails(username: string): Promise<MailListItem[]> {
+export async function fetchInboxMails(email: string): Promise<MailListItem[]> {
   const { data } = await api.get<MailListItem[]>('/mails/inbox', {
-    params: { username },
+    params: { email },
   });
   return data;
 }
@@ -47,25 +48,25 @@ export async function markMailAsRead(mailId: number): Promise<void> {
 /**
  * @function 보낸 메일함 리스트
  * @writer jhm
- * @param username (유저명 -> 후에 세션 작업 정리되면 고유값 [id]로 변경할 예정입니다)
+ * @param email 로그인한 사용자의 이메일
  * @returns 
  */
-export async function fetchSentMails(username: string): Promise<MailListItem[]> {
+export async function fetchSentMails(email: string): Promise<MailListItem[]> {
   const { data } = await api.get<MailListItem[]>('/mails/sent', {
-    params: { username },
+    params: { email },
   });
   return data;
 }
 
 /**
  * @function 받은 메일함 개수
- * @param username (유저명 -> 후에 세션 작업 정리되면 고유값 [id]로 변경할 예정입니다)
+ * @param email 로그인한 사용자의 이메일
  * @writer JHM
  * @returns 
  */
-export async function fetchInboxCount(username: string): Promise<InboxCountResponse> {
+export async function fetchInboxCount(email: string): Promise<InboxCountResponse> {
   const { data } = await api.get<InboxCountResponse>('/mails/inbox/count', {
-    params: { username },
+    params: { email },
   });
   return data;
 }

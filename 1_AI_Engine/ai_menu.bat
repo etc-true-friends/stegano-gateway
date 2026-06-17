@@ -1,10 +1,11 @@
-@echo off
+﻿@echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 
 set "AI_DIR=%~dp0"
 for %%I in ("%AI_DIR%..") do set "ROOT=%%~fI"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%ROOT%\venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 set "WS=%ROOT%\4_Local_Workspace"
 cd /d "%AI_DIR%"
@@ -164,3 +165,4 @@ set /p "DATASET=Dataset folder Enter=dataset: "
 if "%DATASET%"=="" set "DATASET=dataset"
 "%PY%" ensemble_batch_test.py --cover_dir "%WS%\%DATASET%\val\cover" --stego_dir "%WS%\%DATASET%\val\stego" --models_dir "%WS%\models" --output_csv "%WS%\ensemble_reports\%DATASET%_ensemble_report.csv"
 exit /b %errorlevel%
+

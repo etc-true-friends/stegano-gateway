@@ -14,6 +14,8 @@ import uuid
 import shutil
 import sqlite3
 import imghdr
+import shlex
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -106,6 +108,98 @@ else:
 
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
+
+ALETHEIA_TIMEOUT = float(os.getenv("ALETHEIA_TIMEOUT", "8"))
+ALETHEIA_SUSPICIOUS_KEYWORDS = (
+    "suspicious",
+    "stego",
+    "hidden",
+    "detected",
+    "positive",
+    "embedding",
+)
+
+
+def _resolve_aletheia_command():
+    configured = os.getenv("ALETHEIA_CMD")
+    if configured:
+        return shlex.split(configured)
+
+    candidates = [
+        ["aletheia.py", "auto"],
+        ["aletheia", "auto"],
+    ]
+    for candidate in candidates:
+        if shutil.which(candidate[0]):
+            return candidate
+    return None
+
+
+def _run_aletheia(image_path: str) -> dict:
+    """
+    Run Aletheia steganalysis when the CLI is available.
+    The gateway must keep serving files even if Aletheia is missing or fails.
+    """
+    command = _resolve_aletheia_command()
+    if not command:
+        return {
+            "available": False,
+            "suspicious": False,
+            "reason": "Aletheia command not found",
+        }
+
+    try:
+        completed = subprocess.run(
+            command + [image_path],
+            capture_output=True,
+            text=True,
+            timeout=ALETHEIA_TIMEOUT,
+            check=False,
+        )
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr]
+            if part
+        ).strip()
+        output_lower = output.lower()
+        suspicious = any(
+            keyword in output_lower
+            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        )
+
+        return {
+            "available": True,
+            "suspicious": suspicious,
+            "returncode": completed.returncode,
+            "summary": output[:500],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": "Aletheia timeout",
+        }
+    except Exception as exc:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": str(exc),
+        }
+
+
+def _classify_scan(stego_prob_pct: float, aletheia_result: dict):
+    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+
+    if stego_prob_pct >= 75.0 or aletheia_suspicious:
+        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+    if stego_prob_pct >= 30.0:
+        return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
+    return "LOW", "CLEAN", "BYPASS"
+
+
+def _aletheia_header_value(aletheia_result: dict) -> str:
+    if not aletheia_result.get("available"):
+        return "UNAVAILABLE"
+    return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
 
 @app.get("/")
 def read_root():
@@ -313,19 +407,8 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         prob = torch.softmax(output, dim=1)[0]
 
     stego_prob_pct = prob[1].item() * 100
-
-    if stego_prob_pct >= 75.0:
-        risk_level = "HIGH"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    elif stego_prob_pct >= 30.0:
-        risk_level = "MEDIUM"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    else:
-        risk_level = "LOW"
-        verdict = "CLEAN"
-        action = "BYPASS"
+    aletheia_result = _run_aletheia(input_path)
+    risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
     output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -368,6 +451,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "risk_level": risk_level,
         "verdict": verdict,
         "action": action,
+        "aletheia": aletheia_result,
         "sanitized_path": output_path,
         "cdr": cdr_info,
     }
@@ -556,19 +640,8 @@ async def scan_and_sanitize(
             prob = torch.softmax(output, dim=1)[0]
 
         stego_prob_pct = prob[1].item() * 100
-        
-        if stego_prob_pct >= 75.0:
-            risk_level = "HIGH"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        elif stego_prob_pct >= 30.0:
-            risk_level = "MEDIUM"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        else:
-            risk_level = "LOW"
-            verdict = "CLEAN"
-            action = "BYPASS"
+        aletheia_result = _run_aletheia(input_path)
+        risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
 
         output_filename = f"{file_id}_sanitized.jpg"
         output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -615,6 +688,7 @@ async def scan_and_sanitize(
             "X-Gateway-Verdict": str(verdict),
             "X-Gateway-Risk-Level": str(risk_level),
             "X-Gateway-Stego-Prob": f"{stego_prob_pct:.1f}%",
+            "X-Gateway-Aletheia": _aletheia_header_value(aletheia_result),
             "X-Gateway-File-ID": str(file_id),
             "Access-Control-Expose-Headers": "*"  # 브라우저 JS가 헤더를 읽을 수 있도록 허용
         }
@@ -631,16 +705,21 @@ async def scan_and_sanitize(
         raise HTTPException(status_code=500, detail=f"인라인 망연계 처리 실패: {str(e)}")
 
 # ─────────────────────────────────────────────────
-# 직원 username 조회 엔드포인트
+# 직원 email 조회 엔드포인트
 # ─────────────────────────────────────────────────
-@app.get("/users/{username}")
-def get_user_by_username(username: str):
+@app.get("/users/by-email")
+def get_user_by_email(email: str):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, username FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),)
+        """
+        SELECT id, email, username
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (email.strip(),)
     )
     row = cursor.fetchone()
     conn.close()
@@ -648,7 +727,7 @@ def get_user_by_username(username: str):
     if row is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
 
-    return {"id": row["id"], "username": row["username"]}
+    return {"id": row["id"], "email": row["email"], "username": row["username"]}
 
 
 # ─────────────────────────────────────────────────
@@ -656,18 +735,56 @@ def get_user_by_username(username: str):
 # ─────────────────────────────────────────────────
 @app.post("/mails/send")
 async def send_mail(
-    sender_id: int = Form(...),
-    recipient_id: int = Form(...),
-    subject: str = Form(...),
-    body: str = Form(""),
-    status: str = Form("SENT"),
-    parent_mail_id: int = Form(0),
-    attachments: list[UploadFile] = File(default=[]),
+        sender: str = Form(...),
+        recipient: str = Form(...),
+        subject: str = Form(...),
+        body: str = Form(""),
+        status: str = Form("SENT"),
+        parent_mail_id: int = Form(0),
+        attachments: list[UploadFile] = File(default=[]),
 ):
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
+    parent_mail_id = parent_mail_id or 0
+
+    sender_value = sender.strip()
+    recipient_value = recipient.strip()
+
     conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
+    # 발신자 username 조회
+    cursor.execute("""
+        SELECT id, email, username
+        FROM employee
+        WHERE id = ?
+          AND b_deleted = 'N'
+        LIMIT 1
+    """, (sender_value,))
+    sender_row = cursor.fetchone()
+
+    if sender_row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="발신자를 찾을 수 없습니다.")
+
+    sender_id = sender_row["id"]
+
+    # 수신자 username 조회
+    cursor.execute("""
+        SELECT id, email, username
+        FROM employee
+        WHERE id = ?
+          AND b_deleted = 'N'
+        LIMIT 1
+    """, (recipient_value,))
+    recipient_row = cursor.fetchone()
+
+    if recipient_row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="수신자를 찾을 수 없습니다.")
+
+    recipient_id = recipient_row["id"]
 
     # 발신자 SENT 메일함 조회, 없으면 생성
     cursor.execute(
@@ -676,7 +793,7 @@ async def send_mail(
     )
     row = cursor.fetchone()
     if row:
-        mailbox_id = row[0]
+        mailbox_id = row["id"]
     else:
         cursor.execute(
             "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'SENT', ?)",
@@ -691,7 +808,7 @@ async def send_mail(
     )
     row = cursor.fetchone()
     if row:
-        inbox_id = row[0]
+        inbox_id = row["id"]
     else:
         cursor.execute(
             "INSERT INTO mailbox (employee_id, type, created_at) VALUES (?, 'INBOX', ?)",
@@ -719,17 +836,27 @@ async def send_mail(
     for attachment in attachments:
         if not attachment.filename:
             continue
+
         file_id = str(uuid.uuid4())[:8]
         safe_name = _safe_disk_name(attachment.filename)
         stored_path = os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
         contents = await attachment.read()
+
         with open(stored_path, "wb") as f:
             f.write(contents)
 
         cursor.execute("""
             INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (mail_id, attachment.filename, stored_path, len(contents), attachment.content_type, now))
+        """, (
+            mail_id,
+            attachment.filename,
+            stored_path,
+            len(contents),
+            attachment.content_type,
+            now
+        ))
+
         saved_attachments.append({
             "original_file_name": attachment.filename,
             "file_size": len(contents),
@@ -741,7 +868,10 @@ async def send_mail(
 
     return {
         "id": mail_id,
+        "sender": sender_value,
+        "recipient": recipient_value,
         "sender_id": sender_id,
+        "recipient_id": recipient_id,
         "mailbox_id": mailbox_id,
         "subject": subject,
         "body": body,
@@ -749,7 +879,6 @@ async def send_mail(
         "sent_at": now,
         "attachments": saved_attachments,
     }
-
 # ─────────────────────────────────────────────────
 # 메일 목록 조회
 # GET /mails?type=inbox
@@ -803,17 +932,23 @@ async def get_mails(type: str = "inbox"):
 
 # ─────────────────────────────────────────────────
 # 메일 목록 조회 (test.db 기반: 받은 메일 -- 기본 뼈대 로직은 /mails/sent와 동일하게 처리합니다!)
-# GET /mails/sent?username=admin
+# GET /mails/inbox?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/inbox")
-async def get_inbox_mails(username: str = "admin"):
+async def get_inbox_mails(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:
@@ -830,7 +965,8 @@ async def get_inbox_mails(username: str = "admin"):
           m.body,
           m.status,
           m.sent_at,
-          e.username AS sender_username
+          e.username AS sender_username,
+          e.email
         FROM mail m
         JOIN mailbox mb ON mb.id = m.mailbox_id
         JOIN employee e ON e.id = m.sender_id
@@ -854,6 +990,7 @@ async def get_inbox_mails(username: str = "admin"):
         result.append(
             {
                 "id": r["id"],
+                "email": r["email"] or "",
                 "sender": r["sender_username"] or "",
                 "subject": r["subject"] or "",
                 "preview": preview or (r["subject"] or ""),
@@ -868,17 +1005,23 @@ async def get_inbox_mails(username: str = "admin"):
 
 # ─────────────────────────────────────────────────
 # 메일 목록 조회 (test.db 기반: 보낸 메일)
-# GET /mails/sent?username=admin
+# GET /mails/sent?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/sent")
-async def get_sent_mails(username: str = "admin"):
+async def get_sent_mails(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:
@@ -895,7 +1038,8 @@ async def get_sent_mails(username: str = "admin"):
           m.body,
           m.status,
           m.sent_at,
-          e.username AS sender_username
+          e.username AS sender_username,
+          e.email
         FROM mail m
         JOIN mailbox mb ON mb.id = m.mailbox_id
         JOIN employee e ON e.id = m.sender_id
@@ -919,6 +1063,7 @@ async def get_sent_mails(username: str = "admin"):
         result.append(
             {
                 "id": r["id"],
+                "email": r["email"] or "",
                 "sender": r["sender_username"] or "",
                 "subject": r["subject"] or "",
                 "preview": preview or (r["subject"] or ""),
@@ -934,17 +1079,23 @@ async def get_sent_mails(username: str = "admin"):
 
 # ─────────────────────────────────────────────────
 # 받은 메일함 count 조회 (test.db 기반)
-# GET /mails/inbox/count?username=admin
+# GET /mails/inbox/count?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/inbox/count")
-async def get_inbox_count(username: str = "admin"):
+async def get_inbox_count(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:

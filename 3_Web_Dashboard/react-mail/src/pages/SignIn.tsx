@@ -63,8 +63,8 @@ const SignInContainer = styled(Stack)(({ theme }) => ({
 
 export default function SignIn(props: { disableCustomTheme?: boolean }) {
   const navigate = useNavigate();
-  const [usernameError, setUsernameError] = React.useState(false);
-  const [usernameErrorMessage, setUsernameErrorMessage] = React.useState('');
+  const [emailError, setEmailError] = React.useState(false);
+  const [emailErrorMessage, setEmailErrorMessage] = React.useState('');
   const [passwordError, setPasswordError] = React.useState(false);
   const [passwordErrorMessage, setPasswordErrorMessage] = React.useState('');
   const [submitError, setSubmitError] = React.useState('');
@@ -79,12 +79,12 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
     }
 
     const form = event.currentTarget;
-    const username = (form.elements.namedItem('username') as HTMLInputElement).value.trim();
+    const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim();
     const password = (form.elements.namedItem('password') as HTMLInputElement).value;
 
     setLoading(true);
     try {
-      const result = await login(username, password);
+      const result = await login(email, password);
       saveAuthSession(result.token, result.user);
       navigate('/inbox', { replace: true });
     } catch (err: unknown) {
@@ -97,18 +97,18 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
   };
 
   const validateInputs = () => {
-    const username = document.getElementById('username') as HTMLInputElement;
+    const email = document.getElementById('email') as HTMLInputElement;
     const password = document.getElementById('password') as HTMLInputElement;
 
     let isValid = true;
 
-    if (!username.value.trim()) {
-      setUsernameError(true);
-      setUsernameErrorMessage('아이디를 입력해주세요.');
+    if (!email.value.trim()) {
+      setEmailError(true);
+      setEmailErrorMessage('이메일을 입력해주세요.');
       isValid = false;
     } else {
-      setUsernameError(false);
-      setUsernameErrorMessage('');
+      setEmailError(false);
+      setEmailErrorMessage('');
     }
 
     if (!password.value || password.value.length < 6) {
@@ -155,20 +155,20 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
             }}
           >
             <FormControl>
-              <FormLabel htmlFor="username">Id</FormLabel>
+              <FormLabel htmlFor="email">Email</FormLabel>
               <TextField
-                error={usernameError}
-                helperText={usernameErrorMessage}
-                id="username"
-                type="text"
-                name="username"
-                placeholder="your id"
-                autoComplete="username"
+                error={emailError}
+                helperText={emailErrorMessage}
+                id="email"
+                type="email"
+                name="email"
+                placeholder="your@email.com"
+                autoComplete="email"
                 autoFocus
                 required
                 fullWidth
                 variant="outlined"
-                color={usernameError ? 'error' : 'primary'}
+                color={emailError ? 'error' : 'primary'}
               />
             </FormControl>
             <FormControl>

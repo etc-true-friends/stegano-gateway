@@ -13,6 +13,7 @@ import { formatMailDate } from '../../utils/formatMailDate';
 
 export type Email = {
   id: number;
+  email?: string;
   sender: string;
   subject: string;
   preview: string;
