@@ -666,6 +666,8 @@ async def send_mail(
 ):
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
+    parent_mail_id = parent_mail_id or 0
+
     sender_value = sender.strip()
     recipient_value = recipient.strip()
 
