@@ -31,9 +31,9 @@ export default function SentMail() {
   React.useEffect(() => {
     const load = async () => {
       const user = getStoredAuthUser();
-      const username = user?.username ?? 'admin';
+      const email = user?.email ?? 'admin@gmail.com';
       try {
-        const data = await fetchSentMails(username);
+        const data = await fetchSentMails(email);
         setEmails(data as Email[]);
         setSelectedEmail(data[0] ?? null);
       } catch {

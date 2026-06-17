@@ -13,6 +13,7 @@ export const AUTH_USER_KEY = 'mail_auth_user';
 
 export type AuthUser = {
   id: number;
+  email: string;
   username: string;
 };
 
@@ -22,8 +23,8 @@ export type LoginResponse = {
   user: AuthUser;
 };
 
-export async function login(username: string, password: string): Promise<LoginResponse> {
-  const { data } = await api.post<LoginResponse>('/auth/login', { username, password });
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const { data } = await api.post<LoginResponse>('/auth/login', { email, password });
   return data;
 }
 

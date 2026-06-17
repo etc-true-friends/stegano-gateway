@@ -29,9 +29,9 @@ export default function InboxMail() {
   React.useEffect(() => {
     const load = async () => {
       const user = getStoredAuthUser();
-      const username = user?.username ?? 'admin';
+      const email = user?.email ?? 'admin@gmail.com';
       try {
-        const data = await fetchInboxMails(username);
+        const data = await fetchInboxMails(email);
         setEmails(data as Email[]);
         setSelectedEmail(data[0] ?? null);
       } catch {

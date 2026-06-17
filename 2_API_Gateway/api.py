@@ -631,16 +631,21 @@ async def scan_and_sanitize(
         raise HTTPException(status_code=500, detail=f"인라인 망연계 처리 실패: {str(e)}")
 
 # ─────────────────────────────────────────────────
-# 직원 username 조회 엔드포인트
+# 직원 email 조회 엔드포인트
 # ─────────────────────────────────────────────────
-@app.get("/users/{username}")
-def get_user_by_username(username: str):
+@app.get("/users/by-email")
+def get_user_by_email(email: str):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, username FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),)
+        """
+        SELECT id, email, username
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (email.strip(),)
     )
     row = cursor.fetchone()
     conn.close()
@@ -648,7 +653,7 @@ def get_user_by_username(username: str):
     if row is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
 
-    return {"id": row["id"], "username": row["username"]}
+    return {"id": row["id"], "email": row["email"], "username": row["username"]}
 
 
 # ─────────────────────────────────────────────────
@@ -853,17 +858,23 @@ async def get_mails(type: str = "inbox"):
 
 # ─────────────────────────────────────────────────
 # 메일 목록 조회 (test.db 기반: 받은 메일 -- 기본 뼈대 로직은 /mails/sent와 동일하게 처리합니다!)
-# GET /mails/sent?username=admin
+# GET /mails/inbox?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/inbox")
-async def get_inbox_mails(username: str = "admin"):
+async def get_inbox_mails(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:
@@ -880,7 +891,8 @@ async def get_inbox_mails(username: str = "admin"):
           m.body,
           m.status,
           m.sent_at,
-          e.username AS sender_username
+          e.username AS sender_username,
+          e.email
         FROM mail m
         JOIN mailbox mb ON mb.id = m.mailbox_id
         JOIN employee e ON e.id = m.sender_id
@@ -904,6 +916,7 @@ async def get_inbox_mails(username: str = "admin"):
         result.append(
             {
                 "id": r["id"],
+                "email": r["email"] or "",
                 "sender": r["sender_username"] or "",
                 "subject": r["subject"] or "",
                 "preview": preview or (r["subject"] or ""),
@@ -918,17 +931,23 @@ async def get_inbox_mails(username: str = "admin"):
 
 # ─────────────────────────────────────────────────
 # 메일 목록 조회 (test.db 기반: 보낸 메일)
-# GET /mails/sent?username=admin
+# GET /mails/sent?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/sent")
-async def get_sent_mails(username: str = "admin"):
+async def get_sent_mails(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:
@@ -984,17 +1003,23 @@ async def get_sent_mails(username: str = "admin"):
 
 # ─────────────────────────────────────────────────
 # 받은 메일함 count 조회 (test.db 기반)
-# GET /mails/inbox/count?username=admin
+# GET /mails/inbox/count?email=admin@gmail.com
 # ─────────────────────────────────────────────────
 @app.get("/mails/inbox/count")
-async def get_inbox_count(username: str = "admin"):
+async def get_inbox_count(email: str = "admin@gmail.com"):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    login_email = email.strip()
     cur.execute(
-        "SELECT id FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),),
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
     )
     row = cur.fetchone()
     if row is None:
