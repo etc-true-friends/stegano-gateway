@@ -23,6 +23,31 @@ export type InboxCountResponse = {
   inboxCount: number;
 };
 
+export type Attachment = {
+  attachmentId: number;
+  fileName: string;
+};
+
+export type MailDetail = {
+  mailId: number;
+  sender: string;
+  receiver: string;
+  subject: string;
+  body: string;
+  createdAt: string;
+  attachments: Attachment[];
+};
+
+export async function fetchMailDetail(mailId: number): Promise<MailDetail> {
+  const { data } = await api.get<MailDetail>(`/mails/${mailId}`);
+  return data;
+}
+
+export async function fetchAttachmentDownloadUrl(attachmentId: number): Promise<string> {
+  const { data } = await api.get<{ download_url: string }>(`/attachments/${attachmentId}/download`);
+  return data.download_url;
+}
+
 /**
  * @function 받은 메일함 리스트
  * @writer jhm
