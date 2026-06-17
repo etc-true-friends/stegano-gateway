@@ -1,14 +1,16 @@
 # =========================
-# 1. OS 및 파이썬 캐시
+# OS / editor cache
 # =========================
 .DS_Store
 *.DS_Store
 Thumbs.db
 __pycache__/
 *.pyc
+*.pyo
+* - 복사본.py
 
 # =========================
-# 2. 가상환경 및 환경변수
+# Python environments / secrets
 # =========================
 venv/
 .venv/
@@ -17,43 +19,62 @@ venv/
 !.env.example
 
 # =========================
-# 3. 로컬 워크스페이스 (대용량 데이터 및 격리 구역 전체 차단)
+# Logs and generated reports
 # =========================
-# (checkpoints, dataset_*, test_images 등 모든 무거운 파일이 포함됨)
-#4_Local_Workspace/
-4_Local_Workspace/dataset/ 
+*.log
+*.csv
+training.log
+
+# =========================
+# AI checkpoints and model binaries
+# Keep trained weights in S3 or local workspace, not regular Git.
+# =========================
+*.pt
+*.pth
+*.ckpt
+1_AI_Engine/checkpoints/
+1_AI_Engine/training.log
+
+# =========================
+# Local datasets and runtime workspace
+# =========================
+4_Local_Workspace/dataset*/
+4_Local_Workspace/checkpoints*/
+4_Local_Workspace/real_images/
+4_Local_Workspace/test_images/
 4_Local_Workspace/uploads/
 4_Local_Workspace/sanitized/
 4_Local_Workspace/quarantine/
+4_Local_Workspace/*.7z
+4_Local_Workspace/*.db
+4_Local_Workspace/test.py
+
+# Keep lightweight workspace helpers/configs visible to Git.
+!4_Local_Workspace/
+!4_Local_Workspace/workspace_menu.bat
+!4_Local_Workspace/models_config.json
 
 # =========================
-# 4. API 서버 및 데모 임시 파일 (생성 예정)
+# API/runtime generated files
 # =========================
 uploads/
 sanitized/
 quarantine/
 
 # =========================
-# 5. 로그 및 대용량 확장자 전역 차단
-# =========================
-*.log
-*.csv
-
-# 체크포인트 폴더는 올리기 (가중치 파일 포함)
-!4_Local_Workspace/
-!4_Local_Workspace/checkpoints/
-!4_Local_Workspace/checkpoints/*.pt
-4_Local_Workspace/dataset_finetune/
-4_Local_Workspace/dataset_real/
-4_Local_Workspace/dataset_simple_lsb/
-4_Local_Workspace/real_images/
-4_Local_Workspace/test_images/
-4_Local_Workspace/stegano_audit.db
-
-# =========================
-# 6. React 대시보드
+# Frontend build artifacts
 # =========================
 3_Web_Dashboard/react-dashboard/node_modules/
 3_Web_Dashboard/react-dashboard/dist/
 3_Web_Dashboard/react-dashboard/.env
 3_Web_Dashboard/react-dashboard/.env.local
+
+# =========================
+# Presentation/render scratch files
+# =========================
+.ppt_render_*/
+.render_*/
+midreview_s1.png
+pitstop_preview.png
+ppt_preview.png
+중간발표_pitstop.html
