@@ -65,7 +65,7 @@ os.makedirs(QUARANTINE_DIR, exist_ok=True)
 # 데이터베이스 초기화 (SQLite3 방향성 컬럼 고도화)
 # ─────────────────────────────────────────────────
 def init_db():
-    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_logs (
@@ -82,7 +82,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-    auth.configure(MAIL_DB_PATH)
+    auth.configure(DB_PATH)
     auth.init_employee_table()
     auth.seed_default_employee()
 

@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import sqlite3
 import uuid
+import os
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -15,7 +16,11 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-DB_PATH: Optional[str] = None
+# MSA 구조 경로 인식 설정
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(CURRENT_DIR)
+
+MAIL_DB_PATH: Optional[str] = None
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -38,14 +43,15 @@ class LoginResponse(BaseModel):
 
 
 def configure(db_path: str) -> None:
-    global DB_PATH
-    DB_PATH = db_path
+    global MAIL_DB_PATH
+    # MAIL_DB_PATH = db_path
+    MAIL_DB_PATH = os.path.join(CURRENT_DIR, "test.db")
 
 
 def _conn() -> sqlite3.Connection:
-    if not DB_PATH:
-        raise RuntimeError("auth DB_PATH is not configured")
-    conn = sqlite3.connect(DB_PATH)
+    if not MAIL_DB_PATH:
+        raise RuntimeError("auth MAIL_DB_PATH is not configured")
+    conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
