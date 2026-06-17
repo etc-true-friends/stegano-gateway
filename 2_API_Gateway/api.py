@@ -682,9 +682,9 @@ async def send_mail(
 
     # 발신자 username 조회
     cursor.execute("""
-        SELECT id, username
+        SELECT id, email, username
         FROM employee
-        WHERE username = ?
+        WHERE id = ?
           AND b_deleted = 'N'
         LIMIT 1
     """, (sender_value,))
@@ -698,9 +698,9 @@ async def send_mail(
 
     # 수신자 username 조회
     cursor.execute("""
-        SELECT id, username
+        SELECT id, email, username
         FROM employee
-        WHERE username = ?
+        WHERE id = ?
           AND b_deleted = 'N'
         LIMIT 1
     """, (recipient_value,))
@@ -964,7 +964,8 @@ async def get_sent_mails(email: str = "admin@gmail.com"):
           m.body,
           m.status,
           m.sent_at,
-          e.username AS sender_username
+          e.username AS sender_username,
+          e.email
         FROM mail m
         JOIN mailbox mb ON mb.id = m.mailbox_id
         JOIN employee e ON e.id = m.sender_id
@@ -988,6 +989,7 @@ async def get_sent_mails(email: str = "admin@gmail.com"):
         result.append(
             {
                 "id": r["id"],
+                "email": r["email"] or "",
                 "sender": r["sender_username"] or "",
                 "subject": r["subject"] or "",
                 "preview": preview or (r["subject"] or ""),
