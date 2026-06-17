@@ -598,107 +598,22 @@ async def scan_and_sanitize(
         file_id
     )
     
-    # libmagic 의존성 우회: 내장 imghdr을 통한 안전한 포맷 검증
-    img_format = imghdr.what(None, h=contents)
-    if img_format not in ['png', 'jpeg']:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Policy Violation: Unsupported file type ({img_format})."
-        )
-
-    original_ext = os.path.splitext(file.filename)[1] if file.filename else ".png"
-    input_filename = f"{file_id}_{file.filename or 'stream'}{original_ext}"
-    input_path = os.path.join(UPLOAD_DIR, input_filename)
-
-    with open(input_path, "wb") as f:
-        f.write(contents)
-
     try:
-        s3.upload_file(
-            input_path,
-            S3_BUCKET,
-            f"uploads/{input_filename}"
-        )
-    except Exception as e:
-        print(f"S3 Upload Failed: {e}")
-
-    action = "BYPASS"
-    try:
-        from PIL import Image
-        import numpy as np
-        
-        # 차원 에러 방지: 투명도(RGBA)나 흑백을 강제로 RGB(3채널)로 고정 후 규격화
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
-        img = img.resize((256, 256)) 
-        
-        img_array = np.array(img)
-        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
-        img_tensor = img_tensor.unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            output = model(img_tensor)
-            prob = torch.softmax(output, dim=1)[0]
-
-        stego_prob_pct = prob[1].item() * 100
-        aletheia_result = _run_aletheia(input_path)
-        risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
-
-        output_filename = f"{file_id}_sanitized.jpg"
-        output_path = os.path.join(SANITIZED_DIR, output_filename)
-
-        cdr_info = sanitizer.sanitize(input_path, output_path)
-        try:
-            s3.upload_file(
-                output_path,
-                S3_BUCKET,
-                f"sanitized/{output_filename}"
-            )
-        except Exception as e:
-            print(f"S3 Upload Failed: {e}")
-
-        if action == "QUARANTINE":
-            quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
-
-            shutil.move(input_path, quarantine_path)
-            try:
-                s3.upload_file(
-                    quarantine_path,
-                    S3_BUCKET,
-                    f"quarantine/{input_filename}"
-                )
-            except Exception as e:
-                print(f"S3 Upload Failed: {e}")
-
-            try:
-                os.chmod(quarantine_path, 0o440)
-            except:
-                pass
-
-        timestamp_str = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO audit_logs (timestamp, direction, original_name, stego_probability, risk_level, verdict, action)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (timestamp_str, direction, file.filename or 'stream', round(stego_prob_pct, 1), risk_level, verdict, action))
-        conn.commit()
-        conn.close()
-
+        result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
         return {
             "file_id": file_id,
             "original_filename": file.filename or "stream",
             "file_size": len(contents),
             "mime_type": file.content_type or "application/octet-stream",
-            "verdict": verdict,
-            "risk_level": risk_level,
-            "stego_probability": round(stego_prob_pct, 1),
-            "aletheia": _aletheia_header_value(aletheia_result),
-            "sanitized_path": output_path,
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "aletheia": _aletheia_header_value(result["aletheia"]) if isinstance(result["aletheia"], dict) else result["aletheia"],
+            "sanitized_path": result["sanitized_path"],
         }
-
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Policy Violation: {str(e)}")
     except Exception as e:
-        if os.path.exists(input_path) and action != "QUARANTINE":
-            os.remove(input_path)
         raise HTTPException(status_code=500, detail=f"인라인 망연계 처리 실패: {str(e)}")
 
 # ─────────────────────────────────────────────────
@@ -850,7 +765,8 @@ async def send_mail(
             file_size = sizes[i] if i < len(sizes) else 0
 
             safe_name = _safe_disk_name(original_filename)
-            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_sanitized.jpg")
+            safe_name_no_ext = os.path.splitext(safe_name)[0]
+            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
             stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
             # 발신자 SENT에 첨부파일 매핑
