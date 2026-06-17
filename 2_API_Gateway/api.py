@@ -14,6 +14,8 @@ import uuid
 import shutil
 import sqlite3
 import imghdr
+import shlex
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -106,6 +108,98 @@ else:
 
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
+
+ALETHEIA_TIMEOUT = float(os.getenv("ALETHEIA_TIMEOUT", "8"))
+ALETHEIA_SUSPICIOUS_KEYWORDS = (
+    "suspicious",
+    "stego",
+    "hidden",
+    "detected",
+    "positive",
+    "embedding",
+)
+
+
+def _resolve_aletheia_command():
+    configured = os.getenv("ALETHEIA_CMD")
+    if configured:
+        return shlex.split(configured)
+
+    candidates = [
+        ["aletheia.py", "auto"],
+        ["aletheia", "auto"],
+    ]
+    for candidate in candidates:
+        if shutil.which(candidate[0]):
+            return candidate
+    return None
+
+
+def _run_aletheia(image_path: str) -> dict:
+    """
+    Run Aletheia steganalysis when the CLI is available.
+    The gateway must keep serving files even if Aletheia is missing or fails.
+    """
+    command = _resolve_aletheia_command()
+    if not command:
+        return {
+            "available": False,
+            "suspicious": False,
+            "reason": "Aletheia command not found",
+        }
+
+    try:
+        completed = subprocess.run(
+            command + [image_path],
+            capture_output=True,
+            text=True,
+            timeout=ALETHEIA_TIMEOUT,
+            check=False,
+        )
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr]
+            if part
+        ).strip()
+        output_lower = output.lower()
+        suspicious = any(
+            keyword in output_lower
+            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        )
+
+        return {
+            "available": True,
+            "suspicious": suspicious,
+            "returncode": completed.returncode,
+            "summary": output[:500],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": "Aletheia timeout",
+        }
+    except Exception as exc:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": str(exc),
+        }
+
+
+def _classify_scan(stego_prob_pct: float, aletheia_result: dict):
+    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+
+    if stego_prob_pct >= 75.0 or aletheia_suspicious:
+        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+    if stego_prob_pct >= 30.0:
+        return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
+    return "LOW", "CLEAN", "BYPASS"
+
+
+def _aletheia_header_value(aletheia_result: dict) -> str:
+    if not aletheia_result.get("available"):
+        return "UNAVAILABLE"
+    return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
 
 @app.get("/")
 def read_root():
@@ -313,19 +407,8 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         prob = torch.softmax(output, dim=1)[0]
 
     stego_prob_pct = prob[1].item() * 100
-
-    if stego_prob_pct >= 75.0:
-        risk_level = "HIGH"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    elif stego_prob_pct >= 30.0:
-        risk_level = "MEDIUM"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    else:
-        risk_level = "LOW"
-        verdict = "CLEAN"
-        action = "BYPASS"
+    aletheia_result = _run_aletheia(input_path)
+    risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
     output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -368,6 +451,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "risk_level": risk_level,
         "verdict": verdict,
         "action": action,
+        "aletheia": aletheia_result,
         "sanitized_path": output_path,
         "cdr": cdr_info,
     }
@@ -556,19 +640,8 @@ async def scan_and_sanitize(
             prob = torch.softmax(output, dim=1)[0]
 
         stego_prob_pct = prob[1].item() * 100
-        
-        if stego_prob_pct >= 75.0:
-            risk_level = "HIGH"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        elif stego_prob_pct >= 30.0:
-            risk_level = "MEDIUM"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        else:
-            risk_level = "LOW"
-            verdict = "CLEAN"
-            action = "BYPASS"
+        aletheia_result = _run_aletheia(input_path)
+        risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
 
         output_filename = f"{file_id}_sanitized.jpg"
         output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -615,6 +688,7 @@ async def scan_and_sanitize(
             "X-Gateway-Verdict": str(verdict),
             "X-Gateway-Risk-Level": str(risk_level),
             "X-Gateway-Stego-Prob": f"{stego_prob_pct:.1f}%",
+            "X-Gateway-Aletheia": _aletheia_header_value(aletheia_result),
             "X-Gateway-File-ID": str(file_id),
             "Access-Control-Expose-Headers": "*"  # 브라우저 JS가 헤더를 읽을 수 있도록 허용
         }
