@@ -26,20 +26,21 @@ export default function InboxMail() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
-  React.useEffect(() => {
-    const load = async () => {
-      const user = getStoredAuthUser();
-      const email = user?.email ?? 'admin@gmail.com';
-      try {
-        const data = await fetchInboxMails(email);
-        setEmails(data as Email[]);
-        setSelectedEmail(data[0] ?? null);
-      } catch {
-        // API 실패 시 기존 더미 데이터 유지
-      }
-    };
-    load();
+  const loadInboxMails = React.useCallback(async () => {
+    const user = getStoredAuthUser();
+    const email = user?.email ?? 'admin@gmail.com';
+    try {
+      const data = await fetchInboxMails(email);
+      setEmails(data as Email[]);
+      setSelectedEmail(data[0] ?? null);
+    } catch {
+      // API failure: keep current rendered state.
+    }
   }, []);
+
+  React.useEffect(() => {
+    loadInboxMails();
+  }, [loadInboxMails]);
 
   const handleSelectEmail = (email: Email) => {
     const readEmail = { ...email, unread: false };
@@ -55,7 +56,7 @@ export default function InboxMail() {
     window.dispatchEvent(new CustomEvent('mailbox:inbox-read'));
 
     markMailAsRead(email.id).catch(() => {
-      // 서버 업데이트 실패 시 다음 목록 새로고침에서 실제 상태가 반영됩니다.
+      // Server update failures are reflected on the next list reload.
     });
   };
 
@@ -72,7 +73,7 @@ export default function InboxMail() {
       <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
         <Navigation />
 
-        {/* 이메일 목록 패널 */}
+        {/* Email list panel */}
         <Sheet
           sx={{
             width: 320,
@@ -121,9 +122,9 @@ export default function InboxMail() {
           </Box>
         </Sheet>
 
-        {/* 이메일 내용 패널 */}
+        {/* Email content panel */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} />
+          <EmailContent email={selectedEmail} onDeleted={loadInboxMails} />
         </Box>
       </Box>
 

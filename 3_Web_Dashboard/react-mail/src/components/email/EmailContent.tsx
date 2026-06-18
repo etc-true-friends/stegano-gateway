@@ -41,6 +41,8 @@ export default function EmailContent({ email, onDeleted }: Props) {
 
   const handleDelete = async () => {
     if (!email) return;
+    if (!window.confirm('삭제하시겠습니까?')) return;
+
     const { id } = await deleteMail(email.id);
     onDeleted?.(id);
   };

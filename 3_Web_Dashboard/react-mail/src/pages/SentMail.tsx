@@ -28,20 +28,21 @@ export default function SentMail() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
-  React.useEffect(() => {
-    const load = async () => {
-      const user = getStoredAuthUser();
-      const email = user?.email ?? 'admin@gmail.com';
-      try {
-        const data = await fetchSentMails(email);
-        setEmails(data as Email[]);
-        setSelectedEmail(data[0] ?? null);
-      } catch {
-        // API 실패 시 기존 더미 데이터 유지
-      }
-    };
-    load();
+  const loadSentMails = React.useCallback(async () => {
+    const user = getStoredAuthUser();
+    const email = user?.email ?? 'admin@gmail.com';
+    try {
+      const data = await fetchSentMails(email);
+      setEmails(data as Email[]);
+      setSelectedEmail(data[0] ?? null);
+    } catch {
+      // API failure: keep current rendered state.
+    }
   }, []);
+
+  React.useEffect(() => {
+    loadSentMails();
+  }, [loadSentMails]);
 
   const filtered = emails.filter(
     (e) =>
@@ -56,7 +57,7 @@ export default function SentMail() {
       <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
         <Navigation />
 
-        {/* 이메일 목록 패널 */}
+        {/* Email list panel */}
         <Sheet
           sx={{
             width: 320,
@@ -105,9 +106,9 @@ export default function SentMail() {
           </Box>
         </Sheet>
 
-        {/* 이메일 내용 패널 */}
+        {/* Email content panel */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} />
+          <EmailContent email={selectedEmail} onDeleted={loadSentMails} />
         </Box>
       </Box>
 

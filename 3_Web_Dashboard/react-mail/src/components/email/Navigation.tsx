@@ -17,13 +17,12 @@ import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import InboxRoundedIcon from '@mui/icons-material/InboxRounded';
 import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
-import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../../assets/logo.png';
 import MaterialIcon from './MaterialIcon';
 import { fetchInboxCount } from '../../api/mailbox';
-import { getStoredAuthUser } from '../../api/auth';
+import { clearAuthSession, getStoredAuthUser } from '../../api/auth';
 
 export default function Navigation() {
   const navigate = useNavigate();
@@ -33,6 +32,11 @@ export default function Navigation() {
   const resolvedMode = mode === 'system' ? systemMode : mode;
   const isDarkMode = resolvedMode === 'dark';
 
+  const handleLogout = () => {
+    clearAuthSession();
+    navigate('/login', { replace: true });
+  };
+
   React.useEffect(() => {
     const load = async () => {
       const user = getStoredAuthUser();
@@ -41,7 +45,7 @@ export default function Navigation() {
         const res = await fetchInboxCount(email);
         setInboxCount(res.inboxCount);
       } catch {
-        // 기본값(12)을 유지
+        // Keep the current count when the API request fails.
       }
     };
     load();
@@ -162,9 +166,17 @@ export default function Navigation() {
             </MaterialIcon>
           </IconButton>
         </Tooltip>
-        <IconButton size="sm" variant="plain" color="neutral">
-          <MaterialIcon><LogoutRoundedIcon /></MaterialIcon>
-        </IconButton>
+        <Tooltip title={'로그아웃'}>
+          <IconButton
+            size="sm"
+            variant="plain"
+            color="neutral"
+            onClick={handleLogout}
+            aria-label={'로그아웃'}
+          >
+            <MaterialIcon><LogoutRoundedIcon /></MaterialIcon>
+          </IconButton>
+        </Tooltip>
       </Box>
     </Sheet>
   );
