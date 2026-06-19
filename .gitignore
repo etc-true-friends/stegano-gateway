@@ -35,6 +35,14 @@ training.log
 1_AI_Engine/checkpoints/
 1_AI_Engine/training.log
 
+# Mid-review deployment weights.
+!1_AI_Engine/checkpoints/
+!1_AI_Engine/checkpoints/lsb_model.pt
+!1_AI_Engine/checkpoints/aes_lsb_model.pt
+!1_AI_Engine/checkpoints/dct_model.pt
+!1_AI_Engine/checkpoints/dwt_model.pt
+!1_AI_Engine/checkpoints/finetuned_model.pt
+
 # =========================
 # Local datasets and runtime workspace
 # =========================
