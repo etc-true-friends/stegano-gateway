@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
 
@@ -6,12 +6,15 @@ set "WS=%~dp0"
 if "%WS:~-1%"=="\" set "WS=%WS:~0,-1%"
 for %%I in ("%WS%\..") do set "ROOT=%%~fI"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%ROOT%\venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 :main
 cls
 echo Workspace / Dataset Menu
 echo Workspace: %WS%
+echo Root: %ROOT%
+echo Python: %PY%
 echo.
 echo 1. create workspace folders
 echo 2. prepare base cover dataset from real_images
@@ -104,7 +107,7 @@ echo [RUN] variant=%STEGANO_VARIANT%
 echo [RUN] script=%STEGANO_SCRIPT%
 echo [RUN] python=%PY%
 echo.
-"%PY%" "%ROOT%\scripts\make_dataset_variant.py" --workspace "%WS%"
+"%PY%" "%ROOT%\scripts\make_dataset_variant.py" --workspace "%WS%" --variant "%STEGANO_VARIANT%" --script "%STEGANO_SCRIPT%"
 goto wait
 
 :all
@@ -133,7 +136,7 @@ echo [RUN] variant=%STEGANO_VARIANT%
 echo [RUN] script=%STEGANO_SCRIPT%
 echo [RUN] python=%PY%
 echo.
-"%PY%" "%ROOT%\scripts\make_dataset_variant.py" --workspace "%WS%" --yes yes
+"%PY%" "%ROOT%\scripts\make_dataset_variant.py" --workspace "%WS%" --variant "%STEGANO_VARIANT%" --script "%STEGANO_SCRIPT%" --yes yes
 exit /b %ERRORLEVEL%
 
 :wait
