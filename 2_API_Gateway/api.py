@@ -26,6 +26,7 @@ import torch
 import boto3
 import json
 import zipfile
+from urllib.parse import quote
 
 
 # MSA 구조 경로 인식 설정
@@ -1206,7 +1207,7 @@ async def download_attachment(attachment_id: int):
                 Params={
                     "Bucket": S3_BUCKET,
                     "Key": s3_key,
-                    "ResponseContentDisposition": f'attachment; filename="{attachment["original_file_name"]}"',
+                    "ResponseContentDisposition": f"attachment; filename*=UTF-8''{quote(attachment['original_file_name'])}",
                     "ResponseContentType": attachment["mime_type"] or "application/octet-stream",
                 },
                 ExpiresIn=300,  # 5분
