@@ -94,17 +94,72 @@ app.include_router(auth.router)
 
 # 하드웨어 및 인공지능 요원 초기화
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = Srnet().to(device)
+MODELS_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "models_config.json")
 
-CHECKPOINT_PATH = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
-if os.path.exists(CHECKPOINT_PATH):
-    ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
+
+def _load_srnet_model(model_path: str):
+    model_obj = Srnet().to(device)
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
-    print("[+] API Gateway: 파인튜닝 완료된 SRNet 로드 성공.")
-else:
-    print(f"[-] 가중치 누락 경고: {CHECKPOINT_PATH}")
+    model_obj.load_state_dict(state_dict, strict=True)
+    model_obj.eval()
+    return model_obj
+
+
+def _resolve_model_path(config_dir: str, configured_path: str) -> str:
+    if os.path.isabs(configured_path):
+        return configured_path
+    return os.path.abspath(os.path.join(config_dir, configured_path))
+
+
+def _load_ensemble_models():
+    if not os.path.exists(MODELS_CONFIG_PATH):
+        print(f"[-] models_config.json not found: {MODELS_CONFIG_PATH}")
+        return [], {"decision": {"mode": "single_fallback", "suspicious_margin": 0.15}}
+
+    with open(MODELS_CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    config_dir = os.path.dirname(MODELS_CONFIG_PATH)
+    loaded = []
+    for item in config.get("models", []):
+        if not item.get("enabled", True):
+            continue
+
+        model_path = _resolve_model_path(config_dir, item["path"])
+        if not os.path.exists(model_path):
+            print(f"[!] Ensemble model missing: {item.get('name')} -> {model_path}")
+            continue
+
+        loaded.append({
+            "name": item["name"],
+            "display_name": item.get("display_name", item["name"]),
+            "threshold": float(item.get("threshold", 0.5)),
+            "group": item.get("group", ""),
+            "path": model_path,
+            "model": _load_srnet_model(model_path),
+        })
+        print(f"[+] Ensemble model loaded: {item['name']} ({model_path})")
+
+    if not loaded:
+        fallback_path = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
+        if os.path.exists(fallback_path):
+            loaded.append({
+                "name": "fallback_finetuned",
+                "display_name": "Fallback finetuned SRNet",
+                "threshold": 0.85,
+                "group": "fallback",
+                "path": fallback_path,
+                "model": _load_srnet_model(fallback_path),
+            })
+            print(f"[+] Fallback SRNet model loaded: {fallback_path}")
+        else:
+            print("[-] No SRNet model could be loaded.")
+
+    return loaded, config
+
+
+ensemble_models, ensemble_config = _load_ensemble_models()
 
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
@@ -186,12 +241,59 @@ def _run_aletheia(image_path: str) -> dict:
         }
 
 
-def _classify_scan(stego_prob_pct: float, aletheia_result: dict):
-    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
+    if not ensemble_models:
+        return {
+            "stego_prob_pct": 0.0,
+            "route_model": "none",
+            "high_detected": False,
+            "suspicious_detected": False,
+            "model_scores": [],
+        }
 
-    if stego_prob_pct >= 75.0 or aletheia_suspicious:
+    suspicious_margin = float(
+        ensemble_config.get("decision", {}).get("suspicious_margin", 0.15)
+    )
+
+    scores = []
+    with torch.no_grad():
+        for item in ensemble_models:
+            output = item["model"](img_tensor)
+            prob = torch.exp(output[:, 1])[0].item()
+            threshold = item["threshold"]
+            scores.append({
+                "name": item["name"],
+                "display_name": item["display_name"],
+                "probability": prob,
+                "probability_pct": prob * 100.0,
+                "threshold": threshold,
+                "threshold_pct": threshold * 100.0,
+                "high_detected": prob >= threshold,
+                "suspicious_detected": prob >= max(0.0, threshold - suspicious_margin),
+                "router_score": prob / max(threshold, 1e-9),
+            })
+
+    route = max(scores, key=lambda row: row["router_score"])
+
+    return {
+        "stego_prob_pct": route["probability_pct"],
+        "route_model": route["name"],
+        "route_display_name": route["display_name"],
+        "route_threshold_pct": route["threshold_pct"],
+        "high_detected": any(row["high_detected"] for row in scores),
+        "suspicious_detected": any(row["suspicious_detected"] for row in scores),
+        "model_scores": scores,
+    }
+
+
+def _classify_scan(stego_prob_pct: float, aletheia_result: dict, ensemble_result: dict | None = None):
+    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+    ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
+    ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
+
+    if ensemble_high or stego_prob_pct >= 75.0 or aletheia_suspicious:
         return "HIGH", "SUSPICIOUS", "QUARANTINE"
-    if stego_prob_pct >= 30.0:
+    if ensemble_suspicious or stego_prob_pct >= 30.0:
         return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
     return "LOW", "CLEAN", "BYPASS"
 
@@ -204,7 +306,8 @@ def _aletheia_header_value(aletheia_result: dict) -> str:
 @app.get("/")
 def read_root():
     return {
-        "ai_model": "SRNet (Finetuned v1.0)",
+        "ai_model": "SRNet Ensemble (Max Router)",
+        "loaded_models": [item["name"] for item in ensemble_models],
         "device": str(device),
         "version": "2026.05.22"
     }
@@ -402,13 +505,14 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
     img_tensor = img_tensor.unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        output = model(img_tensor)
-        prob = torch.softmax(output, dim=1)[0]
-
-    stego_prob_pct = prob[1].item() * 100
+    ensemble_result = _predict_ensemble(img_tensor)
+    stego_prob_pct = ensemble_result["stego_prob_pct"]
     aletheia_result = _run_aletheia(input_path)
-    risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
+    risk_level, verdict, action = _classify_scan(
+        stego_prob_pct,
+        aletheia_result,
+        ensemble_result,
+    )
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
     output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -452,6 +556,11 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "verdict": verdict,
         "action": action,
         "aletheia": aletheia_result,
+        "ensemble": {
+            "route_model": ensemble_result.get("route_model"),
+            "route_display_name": ensemble_result.get("route_display_name"),
+            "model_scores": ensemble_result.get("model_scores", []),
+        },
         "sanitized_path": output_path,
         "cdr": cdr_info,
     }
@@ -600,6 +709,7 @@ async def scan_and_sanitize(
     
     try:
         result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
+        ensemble_result = result.get("ensemble", {})
         return {
             "file_id": file_id,
             "original_filename": file.filename or "stream",
@@ -608,6 +718,8 @@ async def scan_and_sanitize(
             "verdict": result["verdict"],
             "risk_level": result["risk_level"],
             "stego_probability": result["stego_probability"],
+            "model": ensemble_result.get("route_model"),
+            "model_scores": ensemble_result.get("model_scores", []),
             "aletheia": _aletheia_header_value(result["aletheia"]) if isinstance(result["aletheia"], dict) else result["aletheia"],
             "sanitized_path": result["sanitized_path"],
         }
