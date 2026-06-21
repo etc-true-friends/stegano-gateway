@@ -13,7 +13,14 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - S3_BUCKET=${S3_BUCKET}
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: api-gateway
     restart: always
+
 
   mitmproxy:
     image: mitmproxy/mitmproxy:latest
@@ -29,6 +36,12 @@ services:
     command: sh -c "pip install requests && mitmweb -s /app/proxy_addon.py --listen-host 0.0.0.0 --listen-port 8080 --web-host 0.0.0.0 --web-port 8081 --set web_password=${MITMPROXY_WEB_PASSWORD}"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: mitmproxy
     restart: always
 
   react-dashboard:
@@ -38,6 +51,12 @@ services:
       - "3000:80"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: react-dashboard
     restart: always
 
   react-mail:
@@ -47,4 +66,10 @@ services:
       - "3001:80"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: react-mail
     restart: always
