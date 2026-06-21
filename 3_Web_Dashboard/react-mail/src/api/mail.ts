@@ -4,6 +4,16 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export type ScanVerdict = 'CLEAN' | 'SUSPICIOUS';
 
+export type ScanResult = {
+  file_id: string;
+  original_filename: string;
+  file_size: number;
+  mime_type: string;
+  verdict: ScanVerdict;
+  risk_level: string;
+  stego_probability: number;
+};
+
 export type SendMailResult = {
   id: number;
   status: 'SENT' | 'BLOCKED';
@@ -11,29 +21,38 @@ export type SendMailResult = {
 
 export type UserInfo = {
   id: number;
+  email: string;
   username: string;
 };
 
-export async function findUserByUsername(username: string): Promise<UserInfo | null> {
+export async function findUserByEmail(email: string): Promise<UserInfo | null> {
   try {
-    const res = await axios.get<UserInfo>(`${API_BASE}/users/${username.trim()}`);
+    const res = await axios.get<UserInfo>(`${API_BASE}/users/by-email`, {
+      params: { email: email.trim() },
+    });
     return res.data;
   } catch {
     return null;
   }
 }
 
-async function scanAttachment(file: File): Promise<ScanVerdict> {
+/**
+ * @function 메일 삭제 (정확히는 메일함 삭제입니다.)
+ * @param mailBoxId (메일 고유번호)
+ * @returns
+ */
+export async function deleteMail(mailBoxId: number): Promise<{ id: number }> {
+  const res = await axios.delete<{ id: number }>(`${API_BASE}/mails/${mailBoxId}`);
+  return res.data;
+}
+
+async function scanAttachment(file: File): Promise<ScanResult> {
   const form = new FormData();
   form.append('file', file);
   form.append('direction', 'OUTBOUND');
 
-  const res = await axios.post(`${API_BASE}/scan`, form, {
-    responseType: 'blob',
-  });
-
-  const verdict = res.headers['x-gateway-verdict'] as string;
-  return verdict === 'SUSPICIOUS' ? 'SUSPICIOUS' : 'CLEAN';
+  const res = await axios.post<ScanResult>(`${API_BASE}/scan`, form);
+  return res.data;
 }
 
 export async function sendMail(params: {
@@ -46,29 +65,33 @@ export async function sendMail(params: {
 }): Promise<SendMailResult> {
   const { senderId, recipientId, subject, body, attachments, parentMailId = 0 } = params;
 
-  // 첨부파일 스캔
   let status: 'SENT' | 'BLOCKED' = 'SENT';
+  const scannedFiles: ScanResult[] = [];
+
   for (const file of attachments) {
-    const verdict = await scanAttachment(file);
-    if (verdict === 'SUSPICIOUS') {
+    const result = await scanAttachment(file);
+    scannedFiles.push(result);
+    if (result.verdict === 'SUSPICIOUS') {
       status = 'BLOCKED';
       break;
     }
   }
 
+  const cleanFiles = status === 'SENT' ? scannedFiles : [];
+
   const form = new FormData();
-  form.append('sender_id', String(senderId));
-  form.append('recipient_id', String(recipientId));
+  form.append('sender', String(senderId));
+  form.append('recipient', String(recipientId));
   form.append('subject', subject);
   form.append('body', body);
   form.append('status', status);
   form.append('parent_mail_id', String(parentMailId));
 
-  // SENT인 경우에만 첨부파일 전송
-  if (status === 'SENT') {
-    for (const file of attachments) {
-      form.append('attachments', file);
-    }
+  if (cleanFiles.length > 0) {
+    form.append('attachment_ids', JSON.stringify(cleanFiles.map(f => f.file_id)));
+    form.append('attachment_filenames', JSON.stringify(cleanFiles.map(f => f.original_filename)));
+    form.append('attachment_mimetypes', JSON.stringify(cleanFiles.map(f => f.mime_type)));
+    form.append('attachment_sizes', JSON.stringify(cleanFiles.map(f => f.file_size)));
   }
 
   const res = await axios.post<SendMailResult>(`${API_BASE}/mails/send`, form);

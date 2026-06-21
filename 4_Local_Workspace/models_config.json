@@ -1,0 +1,48 @@
+{
+  "decision": {
+    "mode": "max_router",
+    "suspicious_margin": 0.15
+  },
+  "models": [
+    {
+      "name": "lsb",
+      "display_name": "LSB 전용 모델",
+      "path": "../1_AI_Engine/checkpoints/lsb_model.pt",
+      "group": "spatial",
+      "threshold": 0.80,
+      "enabled": true
+    },
+    {
+      "name": "aes_random_lsb",
+      "display_name": "AES-random LSB 모델",
+      "path": "../1_AI_Engine/checkpoints/aes_lsb_model.pt",
+      "group": "spatial",
+      "threshold": 0.85,
+      "enabled": true
+    },
+    {
+      "name": "dct_mid",
+      "display_name": "DCT 전용 모델",
+      "path": "../1_AI_Engine/checkpoints/dct_model.pt",
+      "group": "frequency",
+      "threshold": 0.80,
+      "enabled": true
+    },
+    {
+      "name": "dwt_haar",
+      "display_name": "DWT 전용 모델",
+      "path": "../1_AI_Engine/checkpoints/dwt_model.pt",
+      "group": "frequency",
+      "threshold": 0.90,
+      "enabled": true
+    },
+    {
+      "name": "finetuned",
+      "display_name": "Fine-tuned 범용 모델",
+      "path": "../1_AI_Engine/checkpoints/finetuned_model.pt",
+      "group": "general",
+      "threshold": 0.85,
+      "enabled": true
+    }
+  ]
+}

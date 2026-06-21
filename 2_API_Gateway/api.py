@@ -14,6 +14,8 @@ import uuid
 import shutil
 import sqlite3
 import imghdr
+import shlex
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -24,6 +26,7 @@ import torch
 import boto3
 import json
 import zipfile
+from urllib.parse import quote
 
 
 # MSA 구조 경로 인식 설정
@@ -46,8 +49,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-S3_BUCKET = os.getenv("S3_BUCKET")
-s3 = boto3.client("s3")
+S3_BUCKET = os.getenv("S3_BUCKET", "stegano-gateway-storage-537124976047-us-east-1-an")
+s3 = boto3.client("s3", region_name="us-east-1")
 
 # 디렉토리 아키텍처 정의 및 생성
 WORKSPACE_DIR = os.path.join(BASE_DIR, "4_Local_Workspace")
@@ -92,25 +95,220 @@ app.include_router(auth.router)
 
 # 하드웨어 및 인공지능 요원 초기화
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = Srnet().to(device)
+MODELS_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "models_config.json")
 
-CHECKPOINT_PATH = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
-if os.path.exists(CHECKPOINT_PATH):
-    ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
+
+def _load_srnet_model(model_path: str):
+    model_obj = Srnet().to(device)
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
-    print("[+] API Gateway: 파인튜닝 완료된 SRNet 로드 성공.")
-else:
-    print(f"[-] 가중치 누락 경고: {CHECKPOINT_PATH}")
+    model_obj.load_state_dict(state_dict, strict=True)
+    model_obj.eval()
+    return model_obj
+
+
+def _resolve_model_path(config_dir: str, configured_path: str) -> str:
+    if os.path.isabs(configured_path):
+        return configured_path
+    return os.path.abspath(os.path.join(config_dir, configured_path))
+
+
+def _load_ensemble_models():
+    if not os.path.exists(MODELS_CONFIG_PATH):
+        print(f"[-] models_config.json not found: {MODELS_CONFIG_PATH}")
+        return [], {"decision": {"mode": "single_fallback", "suspicious_margin": 0.15}}
+
+    with open(MODELS_CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    config_dir = os.path.dirname(MODELS_CONFIG_PATH)
+    loaded = []
+    for item in config.get("models", []):
+        if not item.get("enabled", True):
+            continue
+
+        model_path = _resolve_model_path(config_dir, item["path"])
+        if not os.path.exists(model_path):
+            print(f"[!] Ensemble model missing: {item.get('name')} -> {model_path}")
+            continue
+
+        loaded.append({
+            "name": item["name"],
+            "display_name": item.get("display_name", item["name"]),
+            "threshold": float(item.get("threshold", 0.5)),
+            "group": item.get("group", ""),
+            "path": model_path,
+            "model": _load_srnet_model(model_path),
+        })
+        print(f"[+] Ensemble model loaded: {item['name']} ({model_path})")
+
+    if not loaded:
+        fallback_path = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
+        if os.path.exists(fallback_path):
+            loaded.append({
+                "name": "fallback_finetuned",
+                "display_name": "Fallback finetuned SRNet",
+                "threshold": 0.85,
+                "group": "fallback",
+                "path": fallback_path,
+                "model": _load_srnet_model(fallback_path),
+            })
+            print(f"[+] Fallback SRNet model loaded: {fallback_path}")
+        else:
+            print("[-] No SRNet model could be loaded.")
+
+    return loaded, config
+
+
+ensemble_models, ensemble_config = _load_ensemble_models()
 
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
 
+ALETHEIA_TIMEOUT = float(os.getenv("ALETHEIA_TIMEOUT", "8"))
+ALETHEIA_SUSPICIOUS_KEYWORDS = (
+    "suspicious",
+    "stego",
+    "hidden",
+    "detected",
+    "positive",
+    "embedding",
+)
+
+
+def _resolve_aletheia_command():
+    configured = os.getenv("ALETHEIA_CMD")
+    if configured:
+        return shlex.split(configured)
+
+    candidates = [
+        ["aletheia.py", "auto"],
+        ["aletheia", "auto"],
+    ]
+    for candidate in candidates:
+        if shutil.which(candidate[0]):
+            return candidate
+    return None
+
+
+def _run_aletheia(image_path: str) -> dict:
+    """
+    Run Aletheia steganalysis when the CLI is available.
+    The gateway must keep serving files even if Aletheia is missing or fails.
+    """
+    command = _resolve_aletheia_command()
+    if not command:
+        return {
+            "available": False,
+            "suspicious": False,
+            "reason": "Aletheia command not found",
+        }
+
+    try:
+        completed = subprocess.run(
+            command + [image_path],
+            capture_output=True,
+            text=True,
+            timeout=ALETHEIA_TIMEOUT,
+            check=False,
+        )
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr]
+            if part
+        ).strip()
+        output_lower = output.lower()
+        suspicious = any(
+            keyword in output_lower
+            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        )
+
+        return {
+            "available": True,
+            "suspicious": suspicious,
+            "returncode": completed.returncode,
+            "summary": output[:500],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": "Aletheia timeout",
+        }
+    except Exception as exc:
+        return {
+            "available": True,
+            "suspicious": False,
+            "reason": str(exc),
+        }
+
+
+def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
+    if not ensemble_models:
+        return {
+            "stego_prob_pct": 0.0,
+            "route_model": "none",
+            "high_detected": False,
+            "suspicious_detected": False,
+            "model_scores": [],
+        }
+
+    suspicious_margin = float(
+        ensemble_config.get("decision", {}).get("suspicious_margin", 0.15)
+    )
+
+    scores = []
+    with torch.no_grad():
+        for item in ensemble_models:
+            output = item["model"](img_tensor)
+            prob = torch.exp(output[:, 1])[0].item()
+            threshold = item["threshold"]
+            scores.append({
+                "name": item["name"],
+                "display_name": item["display_name"],
+                "probability": prob,
+                "probability_pct": prob * 100.0,
+                "threshold": threshold,
+                "threshold_pct": threshold * 100.0,
+                "high_detected": prob >= threshold,
+                "suspicious_detected": prob >= max(0.0, threshold - suspicious_margin),
+                "router_score": prob / max(threshold, 1e-9),
+            })
+
+    route = max(scores, key=lambda row: row["router_score"])
+
+    return {
+        "stego_prob_pct": route["probability_pct"],
+        "route_model": route["name"],
+        "route_display_name": route["display_name"],
+        "route_threshold_pct": route["threshold_pct"],
+        "high_detected": any(row["high_detected"] for row in scores),
+        "suspicious_detected": any(row["suspicious_detected"] for row in scores),
+        "model_scores": scores,
+    }
+
+
+def _classify_scan(stego_prob_pct: float, aletheia_result: dict, ensemble_result: dict | None = None):
+    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+    ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
+    ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
+
+    if ensemble_high or stego_prob_pct >= 75.0 or aletheia_suspicious:
+        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+    if ensemble_suspicious or stego_prob_pct >= 30.0:
+        return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
+    return "LOW", "CLEAN", "BYPASS"
+
+
+def _aletheia_header_value(aletheia_result: dict) -> str:
+    if not aletheia_result.get("available"):
+        return "UNAVAILABLE"
+    return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
+
 @app.get("/")
 def read_root():
     return {
-        "ai_model": "SRNet (Finetuned v1.0)",
+        "ai_model": "SRNet Ensemble (Max Router)",
+        "loaded_models": [item["name"] for item in ensemble_models],
         "device": str(device),
         "version": "2026.05.22"
     }
@@ -308,24 +506,14 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
     img_tensor = img_tensor.unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        output = model(img_tensor)
-        prob = torch.softmax(output, dim=1)[0]
-
-    stego_prob_pct = prob[1].item() * 100
-
-    if stego_prob_pct >= 75.0:
-        risk_level = "HIGH"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    elif stego_prob_pct >= 30.0:
-        risk_level = "MEDIUM"
-        verdict = "SUSPICIOUS"
-        action = "QUARANTINE"
-    else:
-        risk_level = "LOW"
-        verdict = "CLEAN"
-        action = "BYPASS"
+    ensemble_result = _predict_ensemble(img_tensor)
+    stego_prob_pct = ensemble_result["stego_prob_pct"]
+    aletheia_result = _run_aletheia(input_path)
+    risk_level, verdict, action = _classify_scan(
+        stego_prob_pct,
+        aletheia_result,
+        ensemble_result,
+    )
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
     output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -368,6 +556,12 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "risk_level": risk_level,
         "verdict": verdict,
         "action": action,
+        "aletheia": aletheia_result,
+        "ensemble": {
+            "route_model": ensemble_result.get("route_model"),
+            "route_display_name": ensemble_result.get("route_display_name"),
+            "model_scores": ensemble_result.get("model_scores", []),
+        },
         "sanitized_path": output_path,
         "cdr": cdr_info,
     }
@@ -514,133 +708,43 @@ async def scan_and_sanitize(
         file_id
     )
     
-    # libmagic 의존성 우회: 내장 imghdr을 통한 안전한 포맷 검증
-    img_format = imghdr.what(None, h=contents)
-    if img_format not in ['png', 'jpeg']:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Policy Violation: Unsupported file type ({img_format})."
-        )
-
-    original_ext = os.path.splitext(file.filename)[1] if file.filename else ".png"
-    input_filename = f"{file_id}_{file.filename or 'stream'}{original_ext}"
-    input_path = os.path.join(UPLOAD_DIR, input_filename)
-
-    with open(input_path, "wb") as f:
-        f.write(contents)
-
     try:
-        s3.upload_file(
-            input_path,
-            S3_BUCKET,
-            f"uploads/{input_filename}"
-        )
-    except Exception as e:
-        print(f"S3 Upload Failed: {e}")
-
-    action = "BYPASS"
-    try:
-        from PIL import Image
-        import numpy as np
-        
-        # 차원 에러 방지: 투명도(RGBA)나 흑백을 강제로 RGB(3채널)로 고정 후 규격화
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
-        img = img.resize((256, 256)) 
-        
-        img_array = np.array(img)
-        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
-        img_tensor = img_tensor.unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            output = model(img_tensor)
-            prob = torch.softmax(output, dim=1)[0]
-
-        stego_prob_pct = prob[1].item() * 100
-        
-        if stego_prob_pct >= 75.0:
-            risk_level = "HIGH"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        elif stego_prob_pct >= 30.0:
-            risk_level = "MEDIUM"
-            verdict = "SUSPICIOUS"
-            action = "QUARANTINE"
-        else:
-            risk_level = "LOW"
-            verdict = "CLEAN"
-            action = "BYPASS"
-
-        output_filename = f"{file_id}_sanitized.jpg"
-        output_path = os.path.join(SANITIZED_DIR, output_filename)
-
-        cdr_info = sanitizer.sanitize(input_path, output_path)
-        try:
-            s3.upload_file(
-                output_path,
-                S3_BUCKET,
-                f"sanitized/{output_filename}"
-            )
-        except Exception as e:
-            print(f"S3 Upload Failed: {e}")
-
-        if action == "QUARANTINE":
-            quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
-
-            shutil.move(input_path, quarantine_path)
-            try:
-                s3.upload_file(
-                    quarantine_path,
-                    S3_BUCKET,
-                    f"quarantine/{input_filename}"
-                )
-            except Exception as e:
-                print(f"S3 Upload Failed: {e}")
-
-            try:
-                os.chmod(quarantine_path, 0o440)
-            except:
-                pass
-
-        timestamp_str = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO audit_logs (timestamp, direction, original_name, stego_probability, risk_level, verdict, action)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (timestamp_str, direction, file.filename or 'stream', round(stego_prob_pct, 1), risk_level, verdict, action))
-        conn.commit()
-        conn.close()
-
-        headers = {
-            "X-Gateway-Verdict": str(verdict),
-            "X-Gateway-Risk-Level": str(risk_level),
-            "X-Gateway-Stego-Prob": f"{stego_prob_pct:.1f}%",
-            "X-Gateway-File-ID": str(file_id),
-            "Access-Control-Expose-Headers": "*"  # 브라우저 JS가 헤더를 읽을 수 있도록 허용
+        result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
+        ensemble_result = result.get("ensemble", {})
+        return {
+            "file_id": file_id,
+            "original_filename": file.filename or "stream",
+            "file_size": len(contents),
+            "mime_type": file.content_type or "application/octet-stream",
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "model": ensemble_result.get("route_model"),
+            "model_scores": ensemble_result.get("model_scores", []),
+            "aletheia": _aletheia_header_value(result["aletheia"]) if isinstance(result["aletheia"], dict) else result["aletheia"],
+            "sanitized_path": result["sanitized_path"],
         }
-
-        return FileResponse(
-            path=output_path,
-            media_type="image/jpeg",
-            headers=headers
-        )
-
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Policy Violation: {str(e)}")
     except Exception as e:
-        if os.path.exists(input_path) and action != "QUARANTINE":
-            os.remove(input_path)
         raise HTTPException(status_code=500, detail=f"인라인 망연계 처리 실패: {str(e)}")
 
 # ─────────────────────────────────────────────────
-# 직원 username 조회 엔드포인트
+# 직원 email 조회 엔드포인트
 # ─────────────────────────────────────────────────
-@app.get("/users/{username}")
-def get_user_by_username(username: str):
+@app.get("/users/by-email")
+def get_user_by_email(email: str):
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, username FROM employee WHERE username = ? AND b_deleted = 'N' LIMIT 1",
-        (username.strip(),)
+        """
+        SELECT id, email, username
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (email.strip(),)
     )
     row = cursor.fetchone()
     conn.close()
@@ -648,7 +752,7 @@ def get_user_by_username(username: str):
     if row is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
 
-    return {"id": row["id"], "username": row["username"]}
+    return {"id": row["id"], "email": row["email"], "username": row["username"]}
 
 
 # ─────────────────────────────────────────────────
@@ -656,14 +760,19 @@ def get_user_by_username(username: str):
 # ─────────────────────────────────────────────────
 @app.post("/mails/send")
 async def send_mail(
-        sender: str = Form(...),
-        recipient: str = Form(...),
-        subject: str = Form(...),
-        body: str = Form(""),
-        status: str = Form("SENT"),
-        parent_mail_id: int = Form(0),
-        attachments: list[UploadFile] = File(default=[]),
+    sender: str = Form(...),
+    recipient: str = Form(...),
+    subject: str = Form(...),
+    body: str = Form(""),
+    status: str = Form("SENT"),
+    parent_mail_id: int = Form(0),
+    attachment_ids: str = Form(""),
+    attachment_filenames: str = Form(""),
+    attachment_mimetypes: str = Form(""),
+    attachment_sizes: str = Form(""),
 ):
+    import json as _json
+
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
     parent_mail_id = parent_mail_id or 0
@@ -677,9 +786,9 @@ async def send_mail(
 
     # 발신자 username 조회
     cursor.execute("""
-        SELECT id, username
+        SELECT id, email, username
         FROM employee
-        WHERE username = ?
+        WHERE id = ?
           AND b_deleted = 'N'
         LIMIT 1
     """, (sender_value,))
@@ -693,9 +802,9 @@ async def send_mail(
 
     # 수신자 username 조회
     cursor.execute("""
-        SELECT id, username
+        SELECT id, email, username
         FROM employee
-        WHERE username = ?
+        WHERE id = ?
           AND b_deleted = 'N'
         LIMIT 1
     """, (recipient_value,))
@@ -747,42 +856,51 @@ async def send_mail(
     mail_id = cursor.lastrowid
 
     # SENT인 경우에만 수신자 INBOX에도 저장
+    inbox_mail_id = None
     if final_status == "SENT":
         cursor.execute("""
             INSERT INTO mail (sender_id, mailbox_id, parent_mail_id, subject, body, status, sent_at, created_at)
             VALUES (?, ?, ?, ?, ?, 'SENT', ?, ?)
         """, (sender_id, inbox_id, parent_mail_id, subject, body, now, now))
+        inbox_mail_id = cursor.lastrowid
 
+    # 스캔 단계에서 저장된 파일을 file_id 기반으로 mail_attachment에 매핑
     saved_attachments = []
-    for attachment in attachments:
-        if not attachment.filename:
-            continue
+    if attachment_ids:
+        ids = _json.loads(attachment_ids)
+        filenames = _json.loads(attachment_filenames) if attachment_filenames else []
+        mimetypes = _json.loads(attachment_mimetypes) if attachment_mimetypes else []
+        sizes = _json.loads(attachment_sizes) if attachment_sizes else []
 
-        file_id = str(uuid.uuid4())[:8]
-        safe_name = _safe_disk_name(attachment.filename)
-        stored_path = os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
-        contents = await attachment.read()
+        for i, file_id in enumerate(ids):
+            original_filename = filenames[i] if i < len(filenames) else "unknown"
+            mime_type = mimetypes[i] if i < len(mimetypes) else "application/octet-stream"
+            file_size = sizes[i] if i < len(sizes) else 0
 
-        with open(stored_path, "wb") as f:
-            f.write(contents)
+            safe_name = _safe_disk_name(original_filename)
+            safe_name_no_ext = os.path.splitext(safe_name)[0]
+            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
+            stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
-        cursor.execute("""
-            INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            mail_id,
-            attachment.filename,
-            stored_path,
-            len(contents),
-            attachment.content_type,
-            now
-        ))
+            # 발신자 SENT에 첨부파일 매핑
+            cursor.execute("""
+                INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
 
-        saved_attachments.append({
-            "original_file_name": attachment.filename,
-            "file_size": len(contents),
-            "mime_type": attachment.content_type,
-        })
+            # 수신자 INBOX에도 동일하게 첨부파일 매핑
+            if inbox_mail_id:
+                cursor.execute("""
+                    INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
+
+            saved_attachments.append({
+                "file_id": file_id,
+                "original_file_name": original_filename,
+                "file_size": file_size,
+                "mime_type": mime_type,
+            })
 
     conn.commit()
     conn.close()
@@ -800,28 +918,281 @@ async def send_mail(
         "sent_at": now,
         "attachments": saved_attachments,
     }
+
 # ─────────────────────────────────────────────────
 # 메일 목록 조회
 # GET /mails?type=inbox
 # ─────────────────────────────────────────────────
 @app.get("/mails")
 async def get_mails(type: str = "inbox"):
+    mailbox_type = type.upper()
+
+    if mailbox_type == "INBOX":
+        mailbox_type = "INBOX"
+    elif mailbox_type == "sent":
+        mailbox_type = "SENT"
+
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            m.id AS mailId,
+            e.username AS sender,
+            m.subject AS subject,
+            m.created_at AS createdAt,
+            CASE
+                WHEN COUNT(a.id) > 0 THEN 1
+                ELSE 0
+            END AS hasAttachment
+        FROM mail m
+        JOIN mailbox mb ON m.mailbox_id = mb.id
+        JOIN employee e ON m.sender_id = e.id
+        LEFT JOIN mail_attachment a ON m.id = a.mail_id
+        WHERE mb.type = ?
+        GROUP BY m.id
+        ORDER BY m.created_at DESC
+    """, (mailbox_type,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
     return [
         {
-            "mailId": 1,
-            "sender": "admin",
-            "subject": "테스트 메일",
-            "hasAttachment": True,
-            "createdAt": "2026-06-15T10:00:00"
-        },
-        {
-            "mailId": 2,
-            "sender": "system",
-            "subject": "스캔 결과",
-            "hasAttachment": False,
-            "createdAt": "2026-06-15T11:00:00"
+            "mailId": row["mailId"],
+            "sender": row["sender"],
+            "subject": row["subject"],
+            "hasAttachment": bool(row["hasAttachment"]),
+            "createdAt": row["createdAt"]
         }
+        for row in rows
     ]
+
+
+# ─────────────────────────────────────────────────
+# 메일 목록 조회 (test.db 기반: 받은 메일 -- 기본 뼈대 로직은 /mails/sent와 동일하게 처리합니다!)
+# GET /mails/inbox?email=admin@gmail.com
+# ─────────────────────────────────────────────────
+@app.get("/mails/inbox")
+async def get_inbox_mails(email: str = "admin@gmail.com"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    login_email = email.strip()
+    cur.execute(
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    rows = cur.execute(
+        """
+        SELECT
+          m.id,
+          m.subject,
+          m.body,
+          m.status,
+          m.sent_at,
+          e.username AS sender_username,
+          e.email
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        JOIN employee e ON e.id = m.sender_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'INBOX'
+          AND m.b_deleted = 'N'
+        ORDER BY m.id DESC
+        """,
+        (employee_id,),
+    ).fetchall()
+
+    colors = ["primary.softBg", "success.softBg", "warning.softBg", "danger.softBg"]
+    result = []
+    for idx, r in enumerate(rows):
+        rawBody = (r["body"] or "").strip()
+        preview = rawBody.replace("\r\n", " ").replace("\n", " ")
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+
+        result.append(
+            {
+                "id": r["id"],
+                "email": r["email"] or "",
+                "sender": r["sender_username"] or "",
+                "subject": r["subject"] or "",
+                "preview": preview or (r["subject"] or ""),
+                "date": r["sent_at"] or "",
+                "unread": r["status"] == "SENT",
+                "avatarColor": colors[idx % len(colors)],
+            }
+        )
+
+    conn.close()
+    return result
+
+# ─────────────────────────────────────────────────
+# 메일 목록 조회 (test.db 기반: 보낸 메일)
+# GET /mails/sent?email=admin@gmail.com
+# ─────────────────────────────────────────────────
+@app.get("/mails/sent")
+async def get_sent_mails(email: str = "admin@gmail.com"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    login_email = email.strip()
+    cur.execute(
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    rows = cur.execute(
+        """
+        SELECT
+          m.id,
+          m.subject,
+          m.body,
+          m.status,
+          m.sent_at,
+          e.username AS sender_username,
+          e.email
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        JOIN employee e ON e.id = m.sender_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'SENT'
+          AND m.b_deleted = 'N'
+        ORDER BY m.id DESC
+        """,
+        (employee_id,),
+    ).fetchall()
+
+    colors = ["primary.softBg", "success.softBg", "warning.softBg", "danger.softBg"]
+    result = []
+    for idx, r in enumerate(rows):
+        rawBody = (r["body"] or "").strip()
+        preview = rawBody.replace("\r\n", " ").replace("\n", " ")
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+
+        result.append(
+            {
+                "id": r["id"],
+                "email": r["email"] or "",
+                "sender": r["sender_username"] or "",
+                "subject": r["subject"] or "",
+                "preview": preview or (r["subject"] or ""),
+                "date": r["sent_at"] or "",
+                "unread": False,
+                "avatarColor": colors[idx % len(colors)],
+            }
+        )
+
+    conn.close()
+    return result
+
+
+# ─────────────────────────────────────────────────
+# 받은 메일함 count 조회 (test.db 기반)
+# GET /mails/inbox/count?email=admin@gmail.com
+# ─────────────────────────────────────────────────
+@app.get("/mails/inbox/count")
+async def get_inbox_count(email: str = "admin@gmail.com"):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    login_email = email.strip()
+    cur.execute(
+        """
+        SELECT id
+        FROM employee
+        WHERE email = ? AND b_deleted = 'N'
+        LIMIT 1
+        """,
+        (login_email,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    employee_id = row["id"]
+
+    cnt = cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        WHERE
+          mb.employee_id = ?
+          AND mb.type = 'INBOX'
+          AND m.b_deleted = 'N'
+          AND m.status = 'SENT'
+        """,
+        (employee_id,),
+    ).fetchone()[0]
+
+    conn.close()
+    return {"inboxCount": int(cnt)}
+
+# ─────────────────────────────────────────────────
+# 받은 메일 읽음 처리
+# PATCH /mails/{mail_id}/read
+# ─────────────────────────────────────────────────
+@app.patch("/mails/{mail_id}/read")
+async def mark_mail_as_read(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE mail
+        SET status = 'READ'
+        WHERE
+          id = ?
+          AND b_deleted = 'N'
+          AND mailbox_id IN (
+            SELECT id
+            FROM mailbox
+            WHERE type = 'INBOX'
+          )
+        """,
+        (mail_id,),
+    )
+
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="읽음 처리할 받은 메일을 찾을 수 없습니다.")
+
+    conn.commit()
+    conn.close()
+    return {"id": mail_id, "status": "READ"}
 
 
 # ─────────────────────────────────────────────────
@@ -830,20 +1201,79 @@ async def get_mails(type: str = "inbox"):
 # ─────────────────────────────────────────────────
 @app.get("/mails/{mail_id}")
 async def get_mail_detail(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            m.id AS mailId,
+            sender.username AS sender,
+            receiver.username AS receiver,
+            m.subject AS subject,
+            m.body AS body,
+            m.created_at AS createdAt
+        FROM mail m
+        JOIN employee sender ON m.sender_id = sender.id
+        JOIN mailbox mb ON m.mailbox_id = mb.id
+        JOIN employee receiver ON mb.employee_id = receiver.id
+        WHERE m.id = ?
+        LIMIT 1
+    """, (mail_id,))
+
+    mail = cursor.fetchone()
+
+    if mail is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="메일을 찾을 수 없습니다.")
+
+    cursor.execute("""
+        SELECT
+            id AS attachmentId,
+            original_file_name AS fileName
+        FROM mail_attachment
+        WHERE mail_id = ?
+        ORDER BY id ASC
+    """, (mail_id,))
+
+    attachments = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
     return {
-        "mailId": mail_id,
-        "sender": "admin",
-        "receiver": "user",
-        "subject": "테스트 메일",
-        "body": "첨부파일 확인 바랍니다.",
-        "attachments": [
-            {
-                "attachmentId": 10,
-                "fileName": "sample.png"
-            }
-        ]
+        "mailId": mail["mailId"],
+        "sender": mail["sender"],
+        "receiver": mail["receiver"],
+        "subject": mail["subject"],
+        "body": mail["body"],
+        "createdAt": mail["createdAt"],
+        "attachments": attachments
     }
 
+# ─────────────────────────────────────────────────
+# 메일 삭제
+# DELETE /mails/{id}
+# ─────────────────────────────────────────────────
+@app.delete("/mails/{mail_id}")
+async def delete_mail(mail_id: int):
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE mail
+        SET b_deleted = 'Y'
+        WHERE id = ?
+        """,
+        (mail_id,),
+    )
+
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="처리할 메일을 찾을 수 없습니다.")
+
+    conn.commit()
+    conn.close()
+    return {"id": mail_id, "status": "DELETE"}
 
 # ─────────────────────────────────────────────────
 # 첨부파일 다운로드
@@ -851,25 +1281,162 @@ async def get_mail_detail(mail_id: int):
 # ─────────────────────────────────────────────────
 @app.get("/attachments/{attachment_id}/download")
 async def download_attachment(attachment_id: int):
-    from fastapi.responses import FileResponse
-    import os
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
 
-    file_path = "uploads/sample.png"
+    cursor.execute("""
+        SELECT
+            original_file_name,
+            stored_path,
+            mime_type
+        FROM mail_attachment
+        WHERE id = ?
+        LIMIT 1
+    """, (attachment_id,))
 
-    if not os.path.exists(file_path):
-        return {
-            "success": False,
-            "message": "Attachment not found",
-            "attachmentId": attachment_id
-        }
+    attachment = cursor.fetchone()
+    conn.close()
+
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="첨부파일을 찾을 수 없습니다.")
+
+    stored_path = attachment["stored_path"]
+
+    # S3 버킷이 설정된 경우 presigned URL 발급
+    if S3_BUCKET:
+        filename = os.path.basename(stored_path)
+        if SANITIZED_DIR in stored_path:
+            s3_key = f"sanitized/{filename}"
+        elif QUARANTINE_DIR in stored_path:
+            raise HTTPException(status_code=403, detail="차단된 파일은 다운로드할 수 없습니다.")
+        else:
+            s3_key = f"uploads/{filename}"
+
+        try:
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": S3_BUCKET,
+                    "Key": s3_key,
+                    "ResponseContentDisposition": f"attachment; filename*=UTF-8''{quote(attachment['original_file_name'])}",
+                    "ResponseContentType": attachment["mime_type"] or "application/octet-stream",
+                },
+                ExpiresIn=300,  # 5분
+            )
+            return {"download_url": presigned_url, "expires_in": 300}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"다운로드 URL 생성 실패: {str(e)}")
+
+    # S3 미설정 시 로컬 파일 반환 (개발 환경 fallback)
+    if not os.path.exists(stored_path):
+        raise HTTPException(status_code=404, detail="첨부파일 파일이 서버에 존재하지 않습니다.")
 
     return FileResponse(
-        path=file_path,
-        media_type="image/png",
-        filename="sample.png"
+        path=stored_path,
+        media_type=attachment["mime_type"] or "application/octet-stream",
+        filename=attachment["original_file_name"]
     )
 
+# ─────────────────────────────────────────────────
+# 위협 현황 조회
+# GET /threats
+# ─────────────────────────────────────────────────
+@app.get("/threats")
+async def get_threats():
 
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM audit_logs
+        WHERE risk_level IN ('HIGH','MEDIUM')
+    """)
+    threats = [dict(row) for row in cursor.fetchall()]
+
+    high_risk = sum(
+        1 for t in threats
+        if t["risk_level"] == "HIGH"
+    )
+
+    medium_risk = sum(
+        1 for t in threats
+        if t["risk_level"] == "MEDIUM"
+    )
+
+    blocked_files = sum(
+        1 for t in threats
+        if t["action"] == "QUARANTINE"
+    )
+
+    conn.close()
+
+    return {
+        "totalThreats": len(threats),
+        "highRisk": high_risk,
+        "mediumRisk": medium_risk,
+        "blockedFiles": blocked_files,
+        "recentThreats": threats[-10:]
+    }
+
+
+# ─────────────────────────────────────────────────
+# CDR 처리 현황 조회
+# GET /cdr/status
+# audit_logs 테이블 기반으로 CDR 처리 현황 집계
+# ─────────────────────────────────────────────────
+@app.get("/cdr/status")
+async def get_cdr_status():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM audit_logs
+        WHERE action IN ('BYPASS', 'QUARANTINE', 'ARCHIVE_BYPASS', 'ARCHIVE_QUARANTINE')
+        ORDER BY timestamp DESC
+    """)
+    cdr_logs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    total_processed = len(cdr_logs)
+
+    sanitized_logs = [
+        log for log in cdr_logs
+        if log["action"] in ("BYPASS", "ARCHIVE_BYPASS")
+    ]
+
+    failed_logs = [
+        log for log in cdr_logs
+        if log["action"] in ("FAILED", "CDR_FAILED")
+    ]
+
+    success_rate = (
+        round((len(sanitized_logs) / total_processed) * 100, 1)
+        if total_processed > 0
+        else 0.0
+    )
+
+    recent_cdr_logs = [
+        {
+            "id": log["id"],
+            "fileName": log["original_name"],
+            "status": log["action"],
+            "processedAt": log["timestamp"]
+        }
+        for log in cdr_logs[:10]
+    ]
+
+    return {
+        "totalProcessed": total_processed,
+        "sanitized": len(sanitized_logs),
+        "failed": len(failed_logs),
+        "successRate": success_rate,
+        "recentCdrLogs": recent_cdr_logs
+    }
 
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)

@@ -1,10 +1,11 @@
-@echo off
+﻿@echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 
 set "AI_DIR=%~dp0"
 for %%I in ("%AI_DIR%..") do set "ROOT=%%~fI"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%ROOT%\venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 set "WS=%ROOT%\4_Local_Workspace"
 cd /d "%AI_DIR%"
@@ -124,7 +125,7 @@ call :read_params
 if errorlevel 1 exit /b 1
 if exist "!CHECKPOINTS_DIR!" rmdir /s /q "!CHECKPOINTS_DIR!"
 mkdir "!CHECKPOINTS_DIR!" 2>nul
-"%PY%" train.py --cover_path "!DATASET_DIR!\train\cover" --stego_path "!DATASET_DIR!\train\stego" --valid_cover_path "!DATASET_DIR!\val\cover" --valid_stego_path "!DATASET_DIR!\val\stego" --checkpoints_dir "!CHECKPOINTS_DIR!" --batch_size !BATCH! --num_epochs !EPOCHS! --train_size !TRAIN_COUNT! --val_size !VAL_COUNT! --lr !LR!
+call :run_train
 exit /b %errorlevel%
 
 :train_resume
@@ -133,6 +134,14 @@ echo [RUN] resume training
 call :read_params
 if errorlevel 1 exit /b 1
 mkdir "!CHECKPOINTS_DIR!" 2>nul
+call :run_train
+exit /b %errorlevel%
+
+:run_train
+set "SRNET_DATASET_DIR=!DATASET_DIR!"
+set "SRNET_CHECKPOINTS_DIR=!CHECKPOINTS_DIR!"
+echo [RUN] SRNET_DATASET_DIR=!SRNET_DATASET_DIR!
+echo [RUN] SRNET_CHECKPOINTS_DIR=!SRNET_CHECKPOINTS_DIR!
 "%PY%" train.py --cover_path "!DATASET_DIR!\train\cover" --stego_path "!DATASET_DIR!\train\stego" --valid_cover_path "!DATASET_DIR!\val\cover" --valid_stego_path "!DATASET_DIR!\val\stego" --checkpoints_dir "!CHECKPOINTS_DIR!" --batch_size !BATCH! --num_epochs !EPOCHS! --train_size !TRAIN_COUNT! --val_size !VAL_COUNT! --lr !LR!
 exit /b %errorlevel%
 
