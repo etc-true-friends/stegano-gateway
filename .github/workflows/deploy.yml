@@ -29,10 +29,10 @@ jobs:
           docker build -t $ECR_REGISTRY/stegano-api:latest .
           docker push $ECR_REGISTRY/stegano-api:latest
 
-          docker build --build-arg VITE_API_BASE=http://3.88.139.96:8000 -t $ECR_REGISTRY/stegano-dashboard:latest ./3_Web_Dashboard/react-dashboard
+          docker build --build-arg VITE_API_BASE=https://api.stegano.app -t $ECR_REGISTRY/stegano-dashboard:latest ./3_Web_Dashboard/react-dashboard
           docker push $ECR_REGISTRY/stegano-dashboard:latest
 
-          docker build --build-arg VITE_API_BASE=http://3.88.139.96:8000 -t $ECR_REGISTRY/stegano-mail:latest ./3_Web_Dashboard/react-mail
+          docker build --build-arg VITE_API_BASE=https://api.stegano.app -t $ECR_REGISTRY/stegano-mail:latest ./3_Web_Dashboard/react-mail
           docker push $ECR_REGISTRY/stegano-mail:latest
 
       - name: SSH Deploy
