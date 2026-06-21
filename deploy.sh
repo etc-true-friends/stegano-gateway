@@ -1,10 +1,10 @@
 #!/bin/bash
-set -e
+         set -e
 
-cd ~/stegano-gateway
+         cd ~/stegano-gateway
 
-docker compose down --remove-orphans
-docker compose pull
-docker compose up -d
+         docker compose down --remove-orphans
+         docker compose build --no-cache
+         docker compose up -d
 
-docker ps
+         docker ps
