@@ -1,14 +1,10 @@
 services:
   api-gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-api:latest
     container_name: stegano-api-gateway
     ports:
       - "8000:8000"
     volumes:
-      - ./2_API_Gateway:/app
-      - ./1_AI_Engine:/1_AI_Engine
       - ./4_Local_Workspace:/4_Local_Workspace
     environment:
       - PYTHONUNBUFFERED=1
@@ -32,10 +28,7 @@ services:
     restart: always
 
   react-dashboard:
-    build:
-      context: ./3_Web_Dashboard/react-dashboard
-      args:
-         - VITE_API_BASE=http://3.88.139.96:8000
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-dashboard:latest
     container_name: stegano-react-dashboard
     ports:
       - "3000:80"
@@ -44,10 +37,7 @@ services:
     restart: always
 
   react-mail:
-    build:
-      context: ./3_Web_Dashboard/react-mail
-      args:
-         - VITE_API_BASE=http://3.88.139.96:8000
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-mail:latest
     container_name: stegano-react-mail
     ports:
       - "3001:80"
