@@ -1,7 +1,6 @@
 import * as React from 'react';
 import Avatar from '@mui/joy/Avatar';
 import Box from '@mui/joy/Box';
-import Chip from '@mui/joy/Chip';
 import ListDivider from '@mui/joy/ListDivider';
 import ListItem from '@mui/joy/ListItem';
 import ListItemButton from '@mui/joy/ListItemButton';
@@ -37,17 +36,30 @@ export default function EmailList({ emails, selectedId, onSelect }: Props) {
             <ListItemButton
               onClick={() => onSelect(email)}
               selected={selectedId === email.id}
-              color={selectedId === email.id ? 'primary' : undefined}
               sx={{
                 flexDirection: 'column',
                 alignItems: 'initial',
                 gap: 1,
                 p: 2,
+                minHeight: 102,
+                borderRadius: 0,
+                backgroundColor: selectedId === email.id ? '#dcecff' : '#fbfcfe',
+                '&:hover': {
+                  backgroundColor: selectedId === email.id ? '#dcecff' : '#f0f5fa',
+                },
+                '&.Mui-selected': {
+                  backgroundColor: '#dcecff',
+                  boxShadow: 'inset 3px 0 0 #2f6fd6',
+                },
               }}
             >
               <Stack direction="row" spacing={1.5}>
                 <Avatar
-                  sx={{ bgcolor: email.avatarColor ?? 'primary.softBg', flexShrink: 0 }}
+                  sx={{
+                    bgcolor: email.avatarColor ?? '#e8f1ff',
+                    color: '#1f4f8f',
+                    flexShrink: 0,
+                  }}
                   size="sm"
                 >
                   {email.sender[0].toUpperCase()}
@@ -56,21 +68,22 @@ export default function EmailList({ emails, selectedId, onSelect }: Props) {
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                     <Typography
                       level="title-sm"
-                      sx={{ fontWeight: email.unread ? 700 : 400 }}
+                      noWrap
+                      sx={{ color: '#111827', fontWeight: email.unread ? 800 : 600 }}
                     >
                       {email.sender}
                     </Typography>
-                    <Typography level="body-xs" sx={{ flexShrink: 0, ml: 1 }}>
+                    <Typography level="body-xs" sx={{ flexShrink: 0, ml: 1, color: '#56657a' }}>
                       {formatMailDate(email.date)}
                     </Typography>
                   </Box>
-                  <Typography level="body-xs" noWrap>
+                  <Typography level="body-sm" noWrap sx={{ color: '#172033', fontWeight: email.unread ? 700 : 500 }}>
                     {email.subject}
                   </Typography>
                 </Box>
                 {email.unread && (
                   <MaterialIcon>
-                    <CircleIcon sx={{ fontSize: 10, color: 'primary.500', mt: 0.5 }} />
+                    <CircleIcon sx={{ fontSize: 9, color: '#2f6fd6', mt: 0.5 }} />
                   </MaterialIcon>
                 )}
               </Stack>
@@ -81,7 +94,8 @@ export default function EmailList({ emails, selectedId, onSelect }: Props) {
                   WebkitLineClamp: 2,
                   WebkitBoxOrient: 'vertical',
                   overflow: 'hidden',
-                  color: 'text.secondary',
+                  color: '#344256',
+                  lineHeight: 1.55,
                 }}
               >
                 {email.preview}
