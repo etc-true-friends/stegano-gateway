@@ -3,12 +3,10 @@ import Box from '@mui/joy/Box';
 import Button from '@mui/joy/Button';
 import CssBaseline from '@mui/joy/CssBaseline';
 import { CssVarsProvider } from '@mui/joy/styles';
-import Stack from '@mui/joy/Stack';
 import Typography from '@mui/joy/Typography';
 import Sheet from '@mui/joy/Sheet';
 import Input from '@mui/joy/Input';
 import Divider from '@mui/joy/Divider';
-import IconButton from '@mui/joy/IconButton';
 import List from '@mui/joy/List';
 import CreateRoundedIcon from '@mui/icons-material/CreateRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
@@ -37,11 +35,19 @@ export default function SentMail() {
         setEmails(data as Email[]);
         setSelectedEmail(data[0] ?? null);
       } catch {
-        // API 실패 시 기존 더미 데이터 유지
+        // API 연결 실패 시 빈 목록을 유지합니다.
       }
     };
     load();
   }, []);
+
+  const handleDeleted = (mailBoxId: number) => {
+    setEmails((current) => {
+      const next = current.filter((item) => item.id !== mailBoxId);
+      setSelectedEmail(next[0] ?? null);
+      return next;
+    });
+  };
 
   const filtered = emails.filter(
     (e) =>
@@ -53,22 +59,22 @@ export default function SentMail() {
   return (
     <CssVarsProvider disableTransitionOnChange>
       <CssBaseline />
-      <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
+      <Box sx={{ display: 'flex', minHeight: '100dvh', background: '#f3f6f9' }}>
         <Navigation />
 
-        {/* 이메일 목록 패널 */}
         <Sheet
           sx={{
-            width: 320,
+            width: { xs: '100%', md: 320 },
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
             borderRight: '1px solid',
-            borderColor: 'divider',
+            borderColor: '#d9e1ea',
+            backgroundColor: '#fbfcfe',
           }}
         >
           <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography level="title-lg" sx={{ flex: 1 }}>
+            <Typography level="title-lg" sx={{ flex: 1, color: '#111827' }}>
               보낸 메일함
             </Typography>
             <Button
@@ -77,6 +83,7 @@ export default function SentMail() {
               size="sm"
               startDecorator={<MaterialIcon><CreateRoundedIcon /></MaterialIcon>}
               onClick={() => setComposeOpen(true)}
+              sx={{ borderRadius: 6, fontWeight: 700 }}
             >
               메일 작성
             </Button>
@@ -89,6 +96,7 @@ export default function SentMail() {
               placeholder="메일 검색..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              sx={{ borderRadius: 6, backgroundColor: '#fff' }}
             />
           </Box>
 
@@ -105,9 +113,8 @@ export default function SentMail() {
           </Box>
         </Sheet>
 
-        {/* 이메일 내용 패널 */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} />
+          <EmailContent email={selectedEmail} onDeleted={handleDeleted} />
         </Box>
       </Box>
 

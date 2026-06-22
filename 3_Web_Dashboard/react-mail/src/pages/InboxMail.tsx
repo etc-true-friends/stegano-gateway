@@ -35,7 +35,7 @@ export default function InboxMail() {
         setEmails(data as Email[]);
         setSelectedEmail(data[0] ?? null);
       } catch {
-        // API 실패 시 기존 더미 데이터 유지
+        // API 연결 실패 시 빈 목록을 유지합니다.
       }
     };
     load();
@@ -55,7 +55,15 @@ export default function InboxMail() {
     window.dispatchEvent(new CustomEvent('mailbox:inbox-read'));
 
     markMailAsRead(email.id).catch(() => {
-      // 서버 업데이트 실패 시 다음 목록 새로고침에서 실제 상태가 반영됩니다.
+      // 다음 목록 새로고침에서 서버 상태가 다시 반영됩니다.
+    });
+  };
+
+  const handleDeleted = (mailBoxId: number) => {
+    setEmails((current) => {
+      const next = current.filter((item) => item.id !== mailBoxId);
+      setSelectedEmail(next[0] ?? null);
+      return next;
     });
   };
 
@@ -69,22 +77,22 @@ export default function InboxMail() {
   return (
     <CssVarsProvider disableTransitionOnChange>
       <CssBaseline />
-      <Box sx={{ display: 'flex', minHeight: '100dvh' }}>
+      <Box sx={{ display: 'flex', minHeight: '100dvh', background: '#f3f6f9' }}>
         <Navigation />
 
-        {/* 이메일 목록 패널 */}
         <Sheet
           sx={{
-            width: 320,
+            width: { xs: '100%', md: 320 },
             flexShrink: 0,
             display: 'flex',
             flexDirection: 'column',
             borderRight: '1px solid',
-            borderColor: 'divider',
+            borderColor: '#d9e1ea',
+            backgroundColor: '#fbfcfe',
           }}
         >
           <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography level="title-lg" sx={{ flex: 1 }}>
+            <Typography level="title-lg" sx={{ flex: 1, color: '#111827' }}>
               받은 메일함
             </Typography>
             <Button
@@ -93,6 +101,7 @@ export default function InboxMail() {
               size="sm"
               startDecorator={<MaterialIcon><CreateRoundedIcon /></MaterialIcon>}
               onClick={() => setComposeOpen(true)}
+              sx={{ borderRadius: 6, fontWeight: 700 }}
             >
               메일 작성
             </Button>
@@ -105,6 +114,7 @@ export default function InboxMail() {
               placeholder="메일 검색..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              sx={{ borderRadius: 6, backgroundColor: '#fff' }}
             />
           </Box>
 
@@ -121,9 +131,8 @@ export default function InboxMail() {
           </Box>
         </Sheet>
 
-        {/* 이메일 내용 패널 */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} />
+          <EmailContent email={selectedEmail} onDeleted={handleDeleted} />
         </Box>
       </Box>
 
