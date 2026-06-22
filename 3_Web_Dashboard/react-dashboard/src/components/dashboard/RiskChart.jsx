@@ -1,21 +1,16 @@
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { getRiskLabel, isCdrLog, isSuspiciousLog } from '../../utils/auditLabels';
 
-const RISK_COLORS = { 
+const RISK_COLORS = {
   HIGH: '#e05c5c',
   MEDIUM: '#d4c5a9',
-  LOW: '#7ec8c8'
-};
-
-const RISK_LABEL = {
-  HIGH: '높음',
-  MEDIUM: '보통',
-  LOW: '낮음'
+  LOW: '#7ec8c8',
 };
 
 const VERDICT_COLORS = {
   '정상': '#7ec8c8',
-  '의심': '#d4c5a9',
-  '차단': '#e05c5c'
+  '위험 탐지': '#e05c5c',
+  'CDR 무해화': '#1e2a4a',
 };
 
 export default function RiskChart({ logs }) {
@@ -25,23 +20,22 @@ export default function RiskChart({ logs }) {
     return acc;
   }, {});
 
-  const pieData = Object.entries(counts).map(([name, value]) => ({ 
-    name: RISK_LABEL[name] || name, 
+  const pieData = Object.entries(counts).map(([name, value]) => ({
+    name: getRiskLabel(name),
     value,
-    key: name
+    key: name,
   }));
 
-  // 바차트: 판정별 건수
   const verdictCounts = logs.reduce((acc, log) => {
-    if (log.action === 'passed') acc['정상'] = (acc['정상'] || 0) + 1;
-    else if (log.action === 'sanitized') acc['의심'] = (acc['의심'] || 0) + 1;
-    else if (log.action === 'quarantined') acc['차단'] = (acc['차단'] || 0) + 1;
+    if (isCdrLog(log)) acc['CDR 무해화'] = (acc['CDR 무해화'] || 0) + 1;
+    else if (isSuspiciousLog(log)) acc['위험 탐지'] = (acc['위험 탐지'] || 0) + 1;
+    else acc['정상'] = (acc['정상'] || 0) + 1;
     return acc;
   }, {});
 
-  const barData = ['정상', '의심', '차단'].map(k => ({
+  const barData = ['정상', '위험 탐지', 'CDR 무해화'].map(k => ({
     name: k,
-    count: verdictCounts[k] || 0
+    count: verdictCounts[k] || 0,
   }));
 
   if (logs.length === 0) {
@@ -54,11 +48,11 @@ export default function RiskChart({ logs }) {
         <div className="chart-label">위험도 분포</div>
         <ResponsiveContainer width="100%" height={200}>
           <PieChart>
-            <Pie 
-              data={pieData} 
-              dataKey="value" 
-              nameKey="name" 
-              cx="50%" cy="50%" 
+            <Pie
+              data={pieData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%" cy="50%"
               innerRadius={45}
               outerRadius={70}
             >

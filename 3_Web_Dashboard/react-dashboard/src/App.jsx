@@ -8,7 +8,7 @@ import './App.css';
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
-  const { audit, sysInfo, online, usingMock, refresh } = useAuditLog();
+  const { audit, online, usingMock, refresh } = useAuditLog();
 
   return (
     <div className="app-shell">
