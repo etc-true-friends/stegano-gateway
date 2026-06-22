@@ -20,7 +20,6 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import AttachFileRoundedIcon from '@mui/icons-material/AttachFileRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
-import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import MaterialIcon from './MaterialIcon';
 import { sendMail, findUserByEmail, UserInfo } from '../../api/mail';
@@ -31,7 +30,7 @@ type Props = {
   onClose: () => void;
 };
 
-type SendState = 'idle' | 'scanning' | 'sending' | 'done' | 'blocked' | 'error';
+type SendState = 'idle' | 'scanning' | 'sending' | 'done' | 'error';
 
 export default function ComposeModal({ open, onClose }: Props) {
   const [to, setTo] = React.useState('');
@@ -110,7 +109,7 @@ export default function ComposeModal({ open, onClose }: Props) {
     try {
       setSendState(attachments.length > 0 ? 'scanning' : 'sending');
 
-      const result = await sendMail({
+      await sendMail({
         senderId: user.id,
         recipientId: toUser!.id,
         subject,
@@ -118,26 +117,25 @@ export default function ComposeModal({ open, onClose }: Props) {
         attachments,
       });
 
-      if (result.status === 'BLOCKED') {
-        setSendState('blocked');
-      } else {
-        setSendState('done');
-        setTimeout(() => {
-          resetForm();
-          onClose();
-        }, 1500);
-      }
+      setSendState('done');
+      setTimeout(() => {
+        resetForm();
+        onClose();
+      }, 1500);
     } catch {
       setSendState('error');
     }
   };
 
-  const statusMessage: Record<SendState, { color: 'success' | 'danger' | 'warning' | 'neutral'; text: string; icon?: React.ReactNode } | null> = {
+  const statusMessage: Record<SendState, { color: 'success' | 'warning' | 'neutral'; text: string; icon?: React.ReactNode } | null> = {
     idle: null,
     scanning: null,
     sending: null,
-    done: { color: 'success', text: '메일이 정상적으로 전송되었습니다.', icon: <MaterialIcon><CheckCircleRoundedIcon /></MaterialIcon> },
-    blocked: { color: 'danger', text: '첨부파일에서 위험 신호가 감지되어 보안 정책 처리가 필요합니다.', icon: <MaterialIcon><WarningRoundedIcon /></MaterialIcon> },
+    done: {
+      color: 'success',
+      text: '메일이 정상적으로 전송되었습니다.',
+      icon: <MaterialIcon><CheckCircleRoundedIcon /></MaterialIcon>,
+    },
     error: { color: 'warning', text: '전송 중 오류가 발생했습니다. 다시 시도해주세요.' },
   };
 
@@ -175,7 +173,7 @@ export default function ComposeModal({ open, onClose }: Props) {
           <Box sx={{ flex: 1 }}>
             <Typography level="title-md">새 메일 작성</Typography>
             <Typography level="body-xs" color="neutral">
-              첨부파일은 전송 전 보안검사를 거칩니다.
+              첨부파일은 전송 전 보안검사와 CDR 무해화를 거칩니다.
             </Typography>
           </Box>
           <ModalClose sx={{ position: 'static' }} onClick={handleClose} />
@@ -290,7 +288,7 @@ export default function ComposeModal({ open, onClose }: Props) {
           {isBusy && (
             <Typography level="body-sm" color="neutral" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <CircularProgress size="sm" />
-              {sendState === 'scanning' ? '첨부파일 보안검사 중...' : '전송 중...'}
+              {sendState === 'scanning' ? '첨부파일 보안검사 및 무해화 중...' : '전송 중...'}
             </Typography>
           )}
           <Button
