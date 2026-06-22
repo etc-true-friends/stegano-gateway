@@ -46,6 +46,7 @@ export default function ComposeModal({ open, onClose }: Props) {
   const toError = toTouched && to.length > 0 && toNotFound;
   const isValid = !!toUser && !!subject;
   const isBusy = sendState === 'scanning' || sendState === 'sending';
+  const showSendProgressText = false;
 
   const handleToBlur = async () => {
     setToTouched(true);
@@ -285,7 +286,7 @@ export default function ComposeModal({ open, onClose }: Props) {
             <MaterialIcon><AttachFileRoundedIcon /></MaterialIcon>
           </IconButton>
           <Box sx={{ flex: 1 }} />
-          {isBusy && (
+          {showSendProgressText && isBusy && (
             <Typography level="body-sm" color="neutral" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <CircularProgress size="sm" />
               {sendState === 'scanning' ? '첨부파일 보안검사 및 무해화 중...' : '전송 중...'}
