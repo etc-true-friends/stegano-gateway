@@ -9,14 +9,12 @@ export default function DashboardPage({ audit }) {
 
   return (
     <div className="dashboard-grid">
-      {/* 상단: 통계 카드 */}
       <div className="grid-full">
         <PanelCard title="탐지 통계">
           <StatCards total={total} suspicious={suspicious} logs={logs} />
         </PanelCard>
       </div>
 
-      {/* 중단: 차트 + 최근 이벤트 */}
       <div className="grid-two-thirds">
         <PanelCard title="위험도 분포 현황">
           <RiskChart logs={logs} />
@@ -28,7 +26,6 @@ export default function DashboardPage({ audit }) {
         </PanelCard>
       </div>
 
-      {/* 하단: 확장자별 탐지 현황 */}
       <div className="grid-full">
         <PanelCard title="확장자별 탐지 현황">
           <ExtChart logs={logs} />

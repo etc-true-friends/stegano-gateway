@@ -1,4 +1,5 @@
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
+import { isCdrLog, isSuspiciousLog } from '../../utils/auditLabels';
 
 const CARDS = [
   { key: 'total', label: '총 스캔 수', dataKey: 'total', color: '#1e2a4a' },
@@ -14,12 +15,8 @@ function buildSparkData(logs) {
     if (!date) return;
     if (!grouped[date]) grouped[date] = { date, total: 0, suspicious: 0, cdr: 0, rateSum: 0 };
     grouped[date].total += 1;
-    if (log.verdict === 'SUSPICIOUS' || log.action === 'quarantined' || log.action === 'sanitized') {
-      grouped[date].suspicious += 1;
-    }
-    if (log.action === 'sanitized' || log.action === 'quarantined') {
-      grouped[date].cdr += 1;
-    }
+    if (isSuspiciousLog(log)) grouped[date].suspicious += 1;
+    if (isCdrLog(log)) grouped[date].cdr += 1;
     grouped[date].rateSum += (log.stego_probability || 0);
   });
 
@@ -27,12 +24,12 @@ function buildSparkData(logs) {
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(d => ({
       ...d,
-      rate: d.total > 0 ? parseFloat((d.rateSum / d.total).toFixed(1)) : 0
+      rate: d.total > 0 ? parseFloat((d.rateSum / d.total).toFixed(1)) : 0,
     }));
 }
 
 export default function StatCards({ total, suspicious, logs = [] }) {
-  const cdr = logs.filter(l => l.action === 'sanitized').length;
+  const cdr = logs.filter(isCdrLog).length;
   const avgRisk = logs.length > 0
     ? `${(logs.reduce((sum, l) => sum + (l.stego_probability || 0), 0) / logs.length).toFixed(1)}%`
     : '0.0%';
@@ -43,9 +40,7 @@ export default function StatCards({ total, suspicious, logs = [] }) {
   return (
     <div className="stat-grid">
       {CARDS.map(c => (
-        <div key={c.key} className="stat-card" style={{
-          borderTop: `3px solid ${c.color}`
-        }}>
+        <div key={c.key} className="stat-card" style={{ borderTop: `3px solid ${c.color}` }}>
           <div className="stat-label" style={{ color: c.color, marginBottom: 6 }}>
             {c.label}
           </div>
@@ -68,7 +63,7 @@ export default function StatCards({ total, suspicious, logs = [] }) {
                       background: '#fff',
                       border: '1px solid #e2e8f0',
                       fontSize: 10,
-                      borderRadius: 4
+                      borderRadius: 4,
                     }}
                     formatter={(val) => [val, c.label]}
                     labelFormatter={(label) => label}

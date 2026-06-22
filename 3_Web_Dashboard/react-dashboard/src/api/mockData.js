@@ -28,8 +28,6 @@ const FILE_NAMES = [
   'receipt_upload.jpg',
 ];
 
-const ACTIONS = ['sanitized', 'quarantined', 'passed', 'sanitized', 'sanitized'];
-
 function makeLog(minutesAgo) {
   const prob = parseFloat((Math.random() * 100).toFixed(1));
   const risk_level = prob >= 70 ? 'HIGH' : prob >= 40 ? 'MEDIUM' : 'LOW';

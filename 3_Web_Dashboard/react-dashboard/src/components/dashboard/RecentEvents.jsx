@@ -1,3 +1,5 @@
+import { getVerdictLabel, isSuspiciousLog } from '../../utils/auditLabels';
+
 export default function RecentEvents({ logs }) {
   const recent = [...logs].reverse().slice(0, 7);
 
@@ -8,9 +10,8 @@ export default function RecentEvents({ logs }) {
   return (
     <ul className="event-list">
       {recent.map((log, i) => {
-        const verdict = log.verdict || log.action || '-';
         const time = (log.timestamp || '').slice(11, 19);
-        const isAlert = verdict !== 'CLEAN';
+        const isAlert = isSuspiciousLog(log);
         return (
           <li key={i} className={`event-item ${isAlert ? 'event-alert' : ''}`}>
             <span className="event-time">{time}</span>
@@ -19,11 +20,11 @@ export default function RecentEvents({ logs }) {
               width: 8, height: 8,
               borderRadius: '50%',
               background: log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
-              flexShrink: 0
+              flexShrink: 0,
             }}/>
             <span className="event-name">{log.original_name || '-'}</span>
             <span className={`event-verdict ${isAlert ? 'verdict-suspicious' : 'verdict-clean'}`}>
-              {verdict === 'CLEAN' ? '정상' : '의심'}
+              {getVerdictLabel(log.verdict)}
             </span>
           </li>
         );
