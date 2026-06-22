@@ -28,8 +28,8 @@ export default function RiskChart({ logs }) {
 
   const verdictCounts = logs.reduce((acc, log) => {
     if (isCdrLog(log)) acc['CDR 무해화'] = (acc['CDR 무해화'] || 0) + 1;
-    else if (isSuspiciousLog(log)) acc['위험 탐지'] = (acc['위험 탐지'] || 0) + 1;
-    else acc['정상'] = (acc['정상'] || 0) + 1;
+    if (isSuspiciousLog(log)) acc['위험 탐지'] = (acc['위험 탐지'] || 0) + 1;
+    if (!isSuspiciousLog(log) && !isCdrLog(log)) acc['정상'] = (acc['정상'] || 0) + 1;
     return acc;
   }, {});
 
