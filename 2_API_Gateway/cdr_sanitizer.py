@@ -36,10 +36,28 @@ class CDRSanitizer:
     # Step 1: 메타데이터/EXIF 제거
     # ─────────────────────────────────────────────────
     def step1_strip_metadata(self, img: Image.Image) -> Image.Image:
-        """픽셀 데이터만 새 이미지로 복사 → EXIF/IPTC/XMP 모두 제거"""
+        """
+        픽셀 데이터만 새 이미지로 복사하여 EXIF/IPTC/XMP를 제거한다.
+
+        P 모드 이미지는 픽셀 값이 실제 RGB가 아니라 팔레트 인덱스이므로,
+        새 P 이미지를 바로 생성하면 팔레트가 소실되어 검게 변할 수 있다.
+        따라서 먼저 실제 색상값을 가진 RGB/RGBA로 변환한다.
+        """
+
+        if img.mode == "P":
+            # 팔레트와 투명도를 실제 RGBA 픽셀로 변환
+            img = img.convert("RGBA")
+
+        elif img.mode == "LA":
+            img = img.convert("RGBA")
+
+        elif img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
         data = list(img.getdata())
         clean = Image.new(img.mode, img.size)
         clean.putdata(data)
+
         self.steps_log.append("✓ Step 1: 메타데이터/EXIF 제거")
         return clean
 
