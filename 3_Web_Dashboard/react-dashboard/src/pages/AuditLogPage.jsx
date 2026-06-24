@@ -1,6 +1,6 @@
 import PanelCard from '../components/common/PanelCard';
 import { useState } from 'react';
-import { getActionLabel, getRiskLabel, getVerdictLabel } from '../utils/auditLabels';
+import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../utils/auditLabels';
 
 export default function AuditLogPage({ logs }) {
   const [search, setSearch] = useState('');
@@ -8,7 +8,7 @@ export default function AuditLogPage({ logs }) {
 
   const filtered = [...logs].reverse().filter(log => {
     const matchSearch = (log.original_name || '').toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === '전체' || log.verdict === filter;
+    const matchFilter = filter === '전체' || log.verdict === filter || (filter === 'POLICY' && isPolicyBlockedLog(log));
     return matchSearch && matchFilter;
   });
 
@@ -32,7 +32,7 @@ export default function AuditLogPage({ logs }) {
               outline: 'none',
             }}
           />
-          {['전체', 'CLEAN', 'SUSPICIOUS'].map(f => (
+          {['전체', 'CLEAN', 'SUSPICIOUS', 'POLICY'].map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -47,7 +47,7 @@ export default function AuditLogPage({ logs }) {
                 color: filter === f ? '#ffffff' : '#64748b',
               }}
             >
-              {f === 'CLEAN' ? '정상' : f === 'SUSPICIOUS' ? '위험' : f}
+              {f === 'CLEAN' ? '정상' : f === 'SUSPICIOUS' ? '위험' : f === 'POLICY' ? '정책' : f}
             </button>
           ))}
         </div>
@@ -71,6 +71,7 @@ export default function AuditLogPage({ logs }) {
                 filtered.map((log, i) => {
                   const verdict = log.verdict || '-';
                   const isClean = verdict === 'CLEAN';
+                  const isPolicy = isPolicyBlockedLog(log);
                   return (
                     <tr key={i} className={isClean ? '' : 'row-alert'}>
                       <td>{(log.timestamp || '').slice(0, 19).replace('T', ' ')}</td>
@@ -88,9 +89,9 @@ export default function AuditLogPage({ logs }) {
                           height: 8,
                           borderRadius: '50%',
                           marginRight: 6,
-                          background: log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
+                          background: isPolicy ? '#8a3ffc' : log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
                         }}/>
-                        {getVerdictLabel(verdict)}
+                        {isPolicy ? '정책' : getVerdictLabel(verdict)}
                       </td>
                       <td>{getActionLabel(log.action)}</td>
                     </tr>
