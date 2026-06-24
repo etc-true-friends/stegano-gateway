@@ -14,6 +14,19 @@ export async function fetchAuditLog() {
   return data;
 }
 
+export async function fetchDetectionThreshold() {
+  const { data } = await api.get('/policy/threshold');
+  return data;
+}
+
+export async function updateDetectionThreshold(highThreshold, mediumThreshold) {
+  const { data } = await api.put('/policy/threshold', {
+    high_threshold: highThreshold,
+    medium_threshold: mediumThreshold,
+  });
+  return data;
+}
+
 export async function scanFile(file) {
     const form = new FormData();
     form.append('file', file);

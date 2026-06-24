@@ -3,6 +3,9 @@ import Navbar from './components/layout/Navbar';
 import Sidebar from './components/layout/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import AuditLogPage from './pages/AuditLogPage';
+import DailyStatsPage from './pages/DailyStatsPage';
+import FileTypeReportPage from './pages/FileTypeReportPage';
+import ThresholdSettingsPage from './pages/ThresholdSettingsPage';
 import { useAuditLog } from './hooks/useAuditLog';
 import './App.css';
 
@@ -18,6 +21,9 @@ export default function App() {
         <main className="main-content">
           {page === 'dashboard' && <DashboardPage audit={audit} />}
           {page === 'audit' && <AuditLogPage logs={audit.logs} />}
+          {page === 'daily-stats' && <DailyStatsPage audit={audit} />}
+          {page === 'file-type' && <FileTypeReportPage audit={audit} />}
+          {page === 'threshold' && <ThresholdSettingsPage />}
         </main>
       </div>
     </div>

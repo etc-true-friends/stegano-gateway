@@ -22,8 +22,8 @@ const MENU_GROUPS = [
     label: '보고서',
     icon: BarChart2,
     items: [
-      { label: '일별 탐지 통계', page: null },
-      { label: '파일 유형별 분석', page: null },
+      { label: '일별 탐지 통계', page: 'daily-stats' },
+      { label: '파일 유형별 분석', page: 'file-type' },
       { label: '위험도 추이', page: null },
     ],
   },
@@ -31,7 +31,7 @@ const MENU_GROUPS = [
     label: '정책 관리',
     icon: Shield,
     items: [
-      { label: '탐지 임계값 설정', page: null },
+      { label: '탐지 임계값 설정', page: 'threshold' },
       { label: '화이트리스트 관리', page: null },
       { label: '알림 설정', page: null },
     ],
