@@ -8,7 +8,6 @@ type MaterialIconProps = {
   children: React.ReactElement<SvgIconProps>;
 };
 
-/** Joy CssVarsProvider와 분리된 Material 테마 — SvgIcon 전용 */
 export default function MaterialIcon({ children }: MaterialIconProps) {
   return (
     <ThemeProvider theme={materialTheme}>

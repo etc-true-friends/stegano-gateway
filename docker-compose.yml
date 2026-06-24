@@ -1,5 +1,6 @@
 services:
   api-gateway:
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-api:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,7 +14,16 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - S3_BUCKET=${S3_BUCKET}
+      - ALETHEIA_CMD=${ALETHEIA_CMD:-python /opt/aletheia/aletheia.py spa}
+      - ALETHEIA_TIMEOUT=${ALETHEIA_TIMEOUT:-8}
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: api-gateway
     restart: always
+
 
   mitmproxy:
     image: mitmproxy/mitmproxy:latest
@@ -29,28 +39,40 @@ services:
     command: sh -c "pip install requests && mitmweb -s /app/proxy_addon.py --listen-host 0.0.0.0 --listen-port 8080 --web-host 0.0.0.0 --web-port 8081 --set web_password=${MITMPROXY_WEB_PASSWORD}"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: mitmproxy
     restart: always
 
   react-dashboard:
-    build:
-      context: ./3_Web_Dashboard/react-dashboard
-      args:
-        - VITE_API_BASE=${VITE_API_BASE:-http://3.88.139.96:8000}
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-dashboard:latest
     container_name: stegano-react-dashboard
     ports:
       - "3000:80"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: react-dashboard
     restart: always
 
   react-mail:
-    build:
-      context: ./3_Web_Dashboard/react-mail
-      args:
-        - VITE_API_BASE=${VITE_API_BASE:-http://3.88.139.96:8000}
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-mail:latest
     container_name: stegano-react-mail
     ports:
       - "3001:80"
     depends_on:
       - api-gateway
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: us-east-1
+        awslogs-group: /stegano-gateway
+        awslogs-stream: react-mail
     restart: always

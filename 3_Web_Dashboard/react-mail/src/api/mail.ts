@@ -16,7 +16,8 @@ export type ScanResult = {
 
 export type SendMailResult = {
   id: number;
-  status: 'SENT' | 'BLOCKED';
+  status: 'SENT';
+  scannedFiles: ScanResult[];
 };
 
 export type UserInfo = {
@@ -36,11 +37,6 @@ export async function findUserByEmail(email: string): Promise<UserInfo | null> {
   }
 }
 
-/**
- * @function 메일 삭제 (정확히는 메일함 삭제입니다.)
- * @param mailBoxId (메일 고유번호)
- * @returns
- */
 export async function deleteMail(mailBoxId: number): Promise<{ id: number }> {
   const res = await axios.delete<{ id: number }>(`${API_BASE}/mails/${mailBoxId}`);
   return res.data;
@@ -65,35 +61,28 @@ export async function sendMail(params: {
 }): Promise<SendMailResult> {
   const { senderId, recipientId, subject, body, attachments, parentMailId = 0 } = params;
 
-  let status: 'SENT' | 'BLOCKED' = 'SENT';
   const scannedFiles: ScanResult[] = [];
 
   for (const file of attachments) {
     const result = await scanAttachment(file);
     scannedFiles.push(result);
-    if (result.verdict === 'SUSPICIOUS') {
-      status = 'BLOCKED';
-      break;
-    }
   }
-
-  const cleanFiles = status === 'SENT' ? scannedFiles : [];
 
   const form = new FormData();
   form.append('sender', String(senderId));
   form.append('recipient', String(recipientId));
   form.append('subject', subject);
   form.append('body', body);
-  form.append('status', status);
+  form.append('status', 'SENT');
   form.append('parent_mail_id', String(parentMailId));
 
-  if (cleanFiles.length > 0) {
-    form.append('attachment_ids', JSON.stringify(cleanFiles.map(f => f.file_id)));
-    form.append('attachment_filenames', JSON.stringify(cleanFiles.map(f => f.original_filename)));
-    form.append('attachment_mimetypes', JSON.stringify(cleanFiles.map(f => f.mime_type)));
-    form.append('attachment_sizes', JSON.stringify(cleanFiles.map(f => f.file_size)));
+  if (scannedFiles.length > 0) {
+    form.append('attachment_ids', JSON.stringify(scannedFiles.map((f) => f.file_id)));
+    form.append('attachment_filenames', JSON.stringify(scannedFiles.map((f) => f.original_filename)));
+    form.append('attachment_mimetypes', JSON.stringify(scannedFiles.map((f) => f.mime_type)));
+    form.append('attachment_sizes', JSON.stringify(scannedFiles.map((f) => f.file_size)));
   }
 
-  const res = await axios.post<SendMailResult>(`${API_BASE}/mails/send`, form);
-  return { id: res.data.id, status };
+  const res = await axios.post<{ id: number }>(`${API_BASE}/mails/send`, form);
+  return { id: res.data.id, status: 'SENT', scannedFiles };
 }

@@ -3,8 +3,8 @@ import { fetchAuditLog, fetchSystemInfo } from '../api/gateway';
 import { MOCK_AUDIT, MOCK_SYS_INFO } from '../api/mockData';
 
 export function useAuditLog(pollInterval = 30000) {
-  const [audit, setAudit] = useState(MOCK_AUDIT);          // 초기값: 더미 데이터
-  const [sysInfo, setSysInfo] = useState(MOCK_SYS_INFO);   // 초기값: 더미 데이터
+  const [audit, setAudit] = useState(MOCK_AUDIT);
+  const [sysInfo, setSysInfo] = useState(MOCK_SYS_INFO);
   const [online, setOnline] = useState(false);
   const [usingMock, setUsingMock] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -17,7 +17,6 @@ export function useAuditLog(pollInterval = 30000) {
       setOnline(true);
       setUsingMock(false);
     } catch {
-      // API 연결 실패 → 더미 데이터 유지
       setOnline(false);
       setUsingMock(true);
       setSysInfo(MOCK_SYS_INFO);
@@ -28,9 +27,12 @@ export function useAuditLog(pollInterval = 30000) {
   }, []);
 
   useEffect(() => {
-    refresh();
+    const firstRefresh = setTimeout(refresh, 0);
     const id = setInterval(refresh, pollInterval);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(firstRefresh);
+      clearInterval(id);
+    };
   }, [refresh, pollInterval]);
 
   return { audit, sysInfo, online, usingMock, loading, refresh };

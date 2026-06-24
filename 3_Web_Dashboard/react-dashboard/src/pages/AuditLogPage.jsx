@@ -1,8 +1,6 @@
 import PanelCard from '../components/common/PanelCard';
 import { useState } from 'react';
-
-const RISK_LABEL = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음' };
-const ACTION_LABEL = { passed: '통과', quarantined: '격리', sanitized: 'CDR 무해화' };
+import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../utils/auditLabels';
 
 export default function AuditLogPage({ logs }) {
   const [search, setSearch] = useState('');
@@ -10,7 +8,7 @@ export default function AuditLogPage({ logs }) {
 
   const filtered = [...logs].reverse().filter(log => {
     const matchSearch = (log.original_name || '').toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === '전체' || log.verdict === filter;
+    const matchFilter = filter === '전체' || log.verdict === filter || (filter === 'POLICY' && isPolicyBlockedLog(log));
     return matchSearch && matchFilter;
   });
 
@@ -24,24 +22,32 @@ export default function AuditLogPage({ logs }) {
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
-              flex: 1, padding: '7px 12px',
-              border: '1px solid #e8e0d0', borderRadius: 6,
-              fontSize: 12, color: '#1e2a4a',
-              background: '#faf7f2', outline: 'none'
+              flex: 1,
+              padding: '7px 12px',
+              border: '1px solid #e8e0d0',
+              borderRadius: 6,
+              fontSize: 12,
+              color: '#1e2a4a',
+              background: '#faf7f2',
+              outline: 'none',
             }}
           />
-          {['전체', 'CLEAN', 'SUSPICIOUS'].map(f => (
+          {['전체', 'CLEAN', 'SUSPICIOUS', 'POLICY'].map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
               style={{
-                padding: '7px 14px', borderRadius: 6, fontSize: 11,
-                fontWeight: 600, cursor: 'pointer', border: '1px solid #e8e0d0',
+                padding: '7px 14px',
+                borderRadius: 6,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: '1px solid #e8e0d0',
                 background: filter === f ? '#1e2a4a' : '#faf7f2',
                 color: filter === f ? '#ffffff' : '#64748b',
               }}
             >
-              {f === 'CLEAN' ? '정상' : f === 'SUSPICIOUS' ? '의심' : f}
+              {f === 'CLEAN' ? '정상' : f === 'SUSPICIOUS' ? '위험' : f === 'POLICY' ? '정책' : f}
             </button>
           ))}
         </div>
@@ -65,6 +71,7 @@ export default function AuditLogPage({ logs }) {
                 filtered.map((log, i) => {
                   const verdict = log.verdict || '-';
                   const isClean = verdict === 'CLEAN';
+                  const isPolicy = isPolicyBlockedLog(log);
                   return (
                     <tr key={i} className={isClean ? '' : 'row-alert'}>
                       <td>{(log.timestamp || '').slice(0, 19).replace('T', ' ')}</td>
@@ -72,18 +79,21 @@ export default function AuditLogPage({ logs }) {
                       <td>{typeof log.stego_probability === 'number' ? `${log.stego_probability.toFixed(1)}%` : '-'}</td>
                       <td>
                         <span className={`risk-badge risk-${(log.risk_level || 'LOW').toLowerCase()}`}>
-                          {RISK_LABEL[log.risk_level] || '-'}
+                          {getRiskLabel(log.risk_level)}
                         </span>
                       </td>
                       <td>
                         <span style={{
-                          display: 'inline-block', width: 8, height: 8,
-                          borderRadius: '50%', marginRight: 6,
-                          background: log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8'
+                          display: 'inline-block',
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          marginRight: 6,
+                          background: isPolicy ? '#8a3ffc' : log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
                         }}/>
-                        {verdict === 'CLEAN' ? '정상' : '의심'}
+                        {isPolicy ? '정책' : getVerdictLabel(verdict)}
                       </td>
-                      <td>{ACTION_LABEL[log.action] || log.action || '-'}</td>
+                      <td>{getActionLabel(log.action)}</td>
                     </tr>
                   );
                 })

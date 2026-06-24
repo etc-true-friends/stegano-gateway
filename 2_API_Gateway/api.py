@@ -95,17 +95,72 @@ app.include_router(auth.router)
 
 # 하드웨어 및 인공지능 요원 초기화
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model = Srnet().to(device)
+MODELS_CONFIG_PATH = os.path.join(WORKSPACE_DIR, "models_config.json")
 
-CHECKPOINT_PATH = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
-if os.path.exists(CHECKPOINT_PATH):
-    ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=False)
+
+def _load_srnet_model(model_path: str):
+    model_obj = Srnet().to(device)
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
-    print("[+] API Gateway: 파인튜닝 완료된 SRNet 로드 성공.")
-else:
-    print(f"[-] 가중치 누락 경고: {CHECKPOINT_PATH}")
+    model_obj.load_state_dict(state_dict, strict=True)
+    model_obj.eval()
+    return model_obj
+
+
+def _resolve_model_path(config_dir: str, configured_path: str) -> str:
+    if os.path.isabs(configured_path):
+        return configured_path
+    return os.path.abspath(os.path.join(config_dir, configured_path))
+
+
+def _load_ensemble_models():
+    if not os.path.exists(MODELS_CONFIG_PATH):
+        print(f"[-] models_config.json not found: {MODELS_CONFIG_PATH}")
+        return [], {"decision": {"mode": "single_fallback", "suspicious_margin": 0.15}}
+
+    with open(MODELS_CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    config_dir = os.path.dirname(MODELS_CONFIG_PATH)
+    loaded = []
+    for item in config.get("models", []):
+        if not item.get("enabled", True):
+            continue
+
+        model_path = _resolve_model_path(config_dir, item["path"])
+        if not os.path.exists(model_path):
+            print(f"[!] Ensemble model missing: {item.get('name')} -> {model_path}")
+            continue
+
+        loaded.append({
+            "name": item["name"],
+            "display_name": item.get("display_name", item["name"]),
+            "threshold": float(item.get("threshold", 0.5)),
+            "group": item.get("group", ""),
+            "path": model_path,
+            "model": _load_srnet_model(model_path),
+        })
+        print(f"[+] Ensemble model loaded: {item['name']} ({model_path})")
+
+    if not loaded:
+        fallback_path = os.path.join(WORKSPACE_DIR, "checkpoints", "best_srnet_finetuned.pt")
+        if os.path.exists(fallback_path):
+            loaded.append({
+                "name": "fallback_finetuned",
+                "display_name": "Fallback finetuned SRNet",
+                "threshold": 0.85,
+                "group": "fallback",
+                "path": fallback_path,
+                "model": _load_srnet_model(fallback_path),
+            })
+            print(f"[+] Fallback SRNet model loaded: {fallback_path}")
+        else:
+            print("[-] No SRNet model could be loaded.")
+
+    return loaded, config
+
+
+ensemble_models, ensemble_config = _load_ensemble_models()
 
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
@@ -162,9 +217,18 @@ def _run_aletheia(image_path: str) -> dict:
             if part
         ).strip()
         output_lower = output.lower()
-        suspicious = any(
-            keyword in output_lower
-            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        clean_markers = (
+            "no hidden data found",
+            "no stego",
+            "not detected",
+            "clean",
+        )
+        suspicious = (
+            not any(marker in output_lower for marker in clean_markers)
+            and any(
+                keyword in output_lower
+                for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+            )
         )
 
         return {
@@ -187,12 +251,59 @@ def _run_aletheia(image_path: str) -> dict:
         }
 
 
-def _classify_scan(stego_prob_pct: float, aletheia_result: dict):
-    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
+    if not ensemble_models:
+        return {
+            "stego_prob_pct": 0.0,
+            "route_model": "none",
+            "high_detected": False,
+            "suspicious_detected": False,
+            "model_scores": [],
+        }
 
-    if stego_prob_pct >= 75.0 or aletheia_suspicious:
+    suspicious_margin = float(
+        ensemble_config.get("decision", {}).get("suspicious_margin", 0.15)
+    )
+
+    scores = []
+    with torch.no_grad():
+        for item in ensemble_models:
+            output = item["model"](img_tensor)
+            prob = torch.exp(output[:, 1])[0].item()
+            threshold = item["threshold"]
+            scores.append({
+                "name": item["name"],
+                "display_name": item["display_name"],
+                "probability": prob,
+                "probability_pct": prob * 100.0,
+                "threshold": threshold,
+                "threshold_pct": threshold * 100.0,
+                "high_detected": prob >= threshold,
+                "suspicious_detected": prob >= max(0.0, threshold - suspicious_margin),
+                "router_score": prob / max(threshold, 1e-9),
+            })
+
+    route = max(scores, key=lambda row: row["router_score"])
+
+    return {
+        "stego_prob_pct": route["probability_pct"],
+        "route_model": route["name"],
+        "route_display_name": route["display_name"],
+        "route_threshold_pct": route["threshold_pct"],
+        "high_detected": any(row["high_detected"] for row in scores),
+        "suspicious_detected": any(row["suspicious_detected"] for row in scores),
+        "model_scores": scores,
+    }
+
+
+def _classify_scan(stego_prob_pct: float, aletheia_result: dict, ensemble_result: dict | None = None):
+    aletheia_suspicious = bool(aletheia_result.get("suspicious"))
+    ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
+    ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
+
+    if ensemble_high or stego_prob_pct >= 75.0 or aletheia_suspicious:
         return "HIGH", "SUSPICIOUS", "QUARANTINE"
-    if stego_prob_pct >= 30.0:
+    if ensemble_suspicious or stego_prob_pct >= 30.0:
         return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
     return "LOW", "CLEAN", "BYPASS"
 
@@ -205,7 +316,8 @@ def _aletheia_header_value(aletheia_result: dict) -> str:
 @app.get("/")
 def read_root():
     return {
-        "ai_model": "SRNet (Finetuned v1.0)",
+        "ai_model": "SRNet Ensemble (Max Router)",
+        "loaded_models": [item["name"] for item in ensemble_models],
         "device": str(device),
         "version": "2026.05.22"
     }
@@ -304,6 +416,113 @@ MAX_ARCHIVE_FILES = int(os.getenv("MAX_ARCHIVE_FILES", 200))
 MAX_ARCHIVE_IMAGES = int(os.getenv("MAX_ARCHIVE_IMAGES", 100))
 ALLOW_NON_IMAGE_IN_ARCHIVE = os.getenv("ALLOW_NON_IMAGE_IN_ARCHIVE", "false").lower() == "true"
 
+DANGEROUS_ATTACHMENT_EXTENSIONS = {
+    ".7z",
+    ".ace",
+    ".app",
+    ".bat",
+    ".chm",
+    ".cmd",
+    ".com",
+    ".cpl",
+    ".crt",
+    ".deb",
+    ".dll",
+    ".dmg",
+    ".exe",
+    ".gadget",
+    ".gzi",
+    ".hta",
+    ".img",
+    ".inf",
+    ".ins",
+    ".iso",
+    ".jar",
+    ".jnlp",
+    ".js",
+    ".jse",
+    ".lnk",
+    ".mde",
+    ".msc",
+    ".msi",
+    ".msp",
+    ".mst",
+    ".pif",
+    ".ps1",
+    ".ps1xml",
+    ".ps2",
+    ".ps2xml",
+    ".psc1",
+    ".psc2",
+    ".pub",
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".pyw",
+    ".rar",
+    ".reg",
+    ".rpm",
+    ".scr",
+    ".sct",
+    ".sh",
+    ".svg",
+    ".swf",
+    ".tar",
+    ".vbe",
+    ".vbs",
+    ".xll",
+    ".wsf",
+    ".wsh",
+    ".xz",
+    ".z",
+}
+
+MACRO_DOCUMENT_EXTENSIONS = {
+    ".docm",
+    ".dotm",
+    ".potm",
+    ".ppam",
+    ".ppsm",
+    ".pptm",
+    ".sldm",
+    ".xlsb",
+    ".xlsm",
+    ".xltm",
+}
+
+DECOY_DOCUMENT_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".hwp",
+    ".hwpx",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+}
+
+SOCIAL_ENGINEERING_KEYWORDS = (
+    "resume",
+    "cv",
+    "invoice",
+    "contract",
+    "quotation",
+    "estimate",
+    "application",
+    "이력서",
+    "입사지원",
+    "견적",
+    "견적서",
+    "계약",
+    "계약서",
+    "청구서",
+    "개인정보",
+)
+
 
 def _safe_archive_member_name(name: str) -> str:
     """
@@ -327,6 +546,136 @@ def _safe_disk_name(name: str) -> str:
         c if c.isalnum() or c in "._-" else "_"
         for c in os.path.basename(name)
     )[:160]
+
+
+def _attachment_policy_findings(filename: str, content_type: str, contents: bytes) -> list[str]:
+    """Return policy findings for non-image attachment risk signals."""
+    safe_name = os.path.basename(filename or "attachment")
+    lower_name = safe_name.lower()
+    suffixes = [suffix.lower() for suffix in PurePosixPath(lower_name).suffixes]
+    findings = []
+
+    if suffixes and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        findings.append(f"dangerous_extension:{suffixes[-1]}")
+
+    if suffixes and suffixes[-1] in MACRO_DOCUMENT_EXTENSIONS:
+        findings.append(f"macro_document:{suffixes[-1]}")
+
+    if len(suffixes) >= 2 and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        if any(suffix in DECOY_DOCUMENT_EXTENSIONS for suffix in suffixes[:-1]):
+            findings.append("double_extension_decoy")
+
+    if any(keyword in lower_name for keyword in SOCIAL_ENGINEERING_KEYWORDS):
+        findings.append("social_engineering_filename")
+
+    declared_type = (content_type or "").lower()
+    if declared_type.startswith("image/") and imghdr.what(None, h=contents) is None:
+        findings.append("mime_extension_mismatch")
+
+    return findings
+
+
+def _requires_policy_sanitization(findings: list[str]) -> bool:
+    return any(
+        finding.startswith("dangerous_extension:")
+        or finding.startswith("macro_document:")
+        or finding == "double_extension_decoy"
+        or finding == "mime_extension_mismatch"
+        for finding in findings
+    )
+
+
+def _write_policy_sanitized_notice(file_id: str, original_name: str, findings: list[str]) -> str:
+    safe_name = _safe_disk_name(original_name) or "attachment"
+    safe_stem = os.path.splitext(safe_name)[0] or "attachment"
+    output_name = f"{file_id}_{safe_stem}_sanitized.txt"
+    output_path = os.path.join(SANITIZED_DIR, output_name)
+
+    notice = "\n".join([
+        "/etc/friends Attachment Sanitization Notice",
+        "",
+        "The original attachment was replaced by policy-based sanitization.",
+        "Reason(s):",
+        *[f"- {finding}" for finding in findings],
+        "",
+        "The gateway does not deliver executable or script-like attachments.",
+        "If this file is business-critical, contact the security administrator.",
+    ])
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(notice)
+
+    return output_path
+
+
+def _find_sanitized_attachment_path(file_id: str, original_filename: str) -> str | None:
+    safe_name = _safe_disk_name(original_filename)
+    safe_name_no_ext = os.path.splitext(safe_name)[0]
+    preferred = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
+    if os.path.exists(preferred):
+        return preferred
+
+    prefix = f"{file_id}_"
+    suffix_prefix = f"{file_id}_{safe_name_no_ext}_sanitized."
+    for filename in os.listdir(SANITIZED_DIR):
+        if filename.startswith(suffix_prefix) or (filename.startswith(prefix) and "_sanitized." in filename):
+            candidate = os.path.join(SANITIZED_DIR, filename)
+            if os.path.isfile(candidate):
+                return candidate
+
+    return None
+
+
+def _scan_policy_attachment_bytes(contents: bytes, display_name: str, content_type: str, direction: str, file_id: str, findings: list[str]):
+    """Sanitize risky non-image attachments by replacing them with a safe notice file."""
+    safe_name = _safe_disk_name(display_name) or "attachment"
+    input_filename = f"{file_id}_{safe_name}"
+    input_path = os.path.join(UPLOAD_DIR, input_filename)
+
+    with open(input_path, "wb") as f:
+        f.write(contents)
+
+    output_path = _write_policy_sanitized_notice(file_id, display_name, findings)
+
+    quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
+    shutil.move(input_path, quarantine_path)
+
+    try:
+        os.chmod(quarantine_path, 0o440)
+    except Exception:
+        pass
+
+    try:
+        if S3_BUCKET:
+            s3.upload_file(quarantine_path, S3_BUCKET, f"quarantine/{input_filename}")
+            s3.upload_file(output_path, S3_BUCKET, f"sanitized/{os.path.basename(output_path)}")
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
+
+    _record_audit(
+        direction=direction,
+        original_name=display_name,
+        stego_prob_pct=100.0,
+        risk_level="HIGH",
+        verdict="SUSPICIOUS",
+        action="POLICY_SANITIZED",
+    )
+
+    sanitized_download_name = f"{os.path.splitext(safe_name)[0]}_sanitized.txt"
+
+    return {
+        "original_name": display_name,
+        "download_name": sanitized_download_name,
+        "stego_probability": 100.0,
+        "risk_level": "HIGH",
+        "verdict": "SUSPICIOUS",
+        "action": "POLICY_SANITIZED",
+        "policy": {
+            "findings": findings,
+            "sanitized_replacement": True,
+        },
+        "sanitized_path": output_path,
+    }
 
 
 def _record_audit(
@@ -403,13 +752,14 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
     img_tensor = img_tensor.unsqueeze(0).to(device)
 
-    with torch.no_grad():
-        output = model(img_tensor)
-        prob = torch.softmax(output, dim=1)[0]
-
-    stego_prob_pct = prob[1].item() * 100
+    ensemble_result = _predict_ensemble(img_tensor)
+    stego_prob_pct = ensemble_result["stego_prob_pct"]
     aletheia_result = _run_aletheia(input_path)
-    risk_level, verdict, action = _classify_scan(stego_prob_pct, aletheia_result)
+    risk_level, verdict, action = _classify_scan(
+        stego_prob_pct,
+        aletheia_result,
+        ensemble_result,
+    )
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
     output_path = os.path.join(SANITIZED_DIR, output_filename)
@@ -453,6 +803,11 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "verdict": verdict,
         "action": action,
         "aletheia": aletheia_result,
+        "ensemble": {
+            "route_model": ensemble_result.get("route_model"),
+            "route_display_name": ensemble_result.get("route_display_name"),
+            "model_scores": ensemble_result.get("model_scores", []),
+        },
         "sanitized_path": output_path,
         "cdr": cdr_info,
     }
@@ -585,6 +940,32 @@ async def scan_and_sanitize(
     # ZIP 압축파일이면 내부 이미지들을 개별 스캔 + CDR 후 sanitized zip 반환
     content_type = (file.content_type or "").lower()
     filename_lower = (file.filename or "").lower()
+    original_filename = file.filename or "stream"
+
+    policy_findings = _attachment_policy_findings(original_filename, content_type, contents)
+    if _requires_policy_sanitization(policy_findings):
+        result = _scan_policy_attachment_bytes(
+            contents=contents,
+            display_name=original_filename,
+            content_type=file.content_type or "application/octet-stream",
+            direction=direction,
+            file_id=file_id,
+            findings=policy_findings,
+        )
+        return {
+            "file_id": file_id,
+            "original_filename": result["download_name"],
+            "file_size": os.path.getsize(result["sanitized_path"]),
+            "mime_type": "text/plain",
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "model": "policy_engine",
+            "model_scores": [],
+            "aletheia": "SKIPPED",
+            "policy": result["policy"],
+            "sanitized_path": result["sanitized_path"],
+        }
 
     is_zip_payload = zipfile.is_zipfile(io.BytesIO(contents))
 
@@ -601,6 +982,7 @@ async def scan_and_sanitize(
     
     try:
         result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
+        ensemble_result = result.get("ensemble", {})
         return {
             "file_id": file_id,
             "original_filename": file.filename or "stream",
@@ -609,6 +991,8 @@ async def scan_and_sanitize(
             "verdict": result["verdict"],
             "risk_level": result["risk_level"],
             "stego_probability": result["stego_probability"],
+            "model": ensemble_result.get("route_model"),
+            "model_scores": ensemble_result.get("model_scores", []),
             "aletheia": _aletheia_header_value(result["aletheia"]) if isinstance(result["aletheia"], dict) else result["aletheia"],
             "sanitized_path": result["sanitized_path"],
         }
@@ -766,9 +1150,8 @@ async def send_mail(
             file_size = sizes[i] if i < len(sizes) else 0
 
             safe_name = _safe_disk_name(original_filename)
-            safe_name_no_ext = os.path.splitext(safe_name)[0]
-            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
-            stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
+            sanitized_path = _find_sanitized_attachment_path(file_id, original_filename)
+            stored_path = sanitized_path if sanitized_path else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
             # 발신자 SENT에 첨부파일 매핑
             cursor.execute("""

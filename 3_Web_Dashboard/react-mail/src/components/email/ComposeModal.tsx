@@ -20,7 +20,6 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import AttachFileRoundedIcon from '@mui/icons-material/AttachFileRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
-import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import MaterialIcon from './MaterialIcon';
 import { sendMail, findUserByEmail, UserInfo } from '../../api/mail';
@@ -31,7 +30,7 @@ type Props = {
   onClose: () => void;
 };
 
-type SendState = 'idle' | 'scanning' | 'sending' | 'done' | 'blocked' | 'error';
+type SendState = 'idle' | 'scanning' | 'sending' | 'done' | 'error';
 
 export default function ComposeModal({ open, onClose }: Props) {
   const [to, setTo] = React.useState('');
@@ -47,6 +46,7 @@ export default function ComposeModal({ open, onClose }: Props) {
   const toError = toTouched && to.length > 0 && toNotFound;
   const isValid = !!toUser && !!subject;
   const isBusy = sendState === 'scanning' || sendState === 'sending';
+  const showSendProgressText = false;
 
   const handleToBlur = async () => {
     setToTouched(true);
@@ -108,13 +108,9 @@ export default function ComposeModal({ open, onClose }: Props) {
     }
 
     try {
-      if (attachments.length > 0) {
-        setSendState('scanning');
-      } else {
-        setSendState('sending');
-      }
+      setSendState(attachments.length > 0 ? 'scanning' : 'sending');
 
-      const result = await sendMail({
+      await sendMail({
         senderId: user.id,
         recipientId: toUser!.id,
         subject,
@@ -122,26 +118,25 @@ export default function ComposeModal({ open, onClose }: Props) {
         attachments,
       });
 
-      if (result.status === 'BLOCKED') {
-        setSendState('blocked');
-      } else {
-        setSendState('done');
-        setTimeout(() => {
-          resetForm();
-          onClose();
-        }, 1500);
-      }
+      setSendState('done');
+      setTimeout(() => {
+        resetForm();
+        onClose();
+      }, 1500);
     } catch {
       setSendState('error');
     }
   };
 
-  const statusMessage: Record<SendState, { color: 'success' | 'danger' | 'warning' | 'neutral'; text: string; icon?: React.ReactNode } | null> = {
+  const statusMessage: Record<SendState, { color: 'success' | 'warning' | 'neutral'; text: string; icon?: React.ReactNode } | null> = {
     idle: null,
     scanning: null,
     sending: null,
-    done: { color: 'success', text: '메일이 성공적으로 전송되었습니다.', icon: <MaterialIcon><CheckCircleRoundedIcon /></MaterialIcon> },
-    blocked: { color: 'danger', text: '첨부파일에서 위협이 탐지되어 전송이 차단되었습니다.', icon: <MaterialIcon><WarningRoundedIcon /></MaterialIcon> },
+    done: {
+      color: 'success',
+      text: '메일이 정상적으로 전송되었습니다.',
+      icon: <MaterialIcon><CheckCircleRoundedIcon /></MaterialIcon>,
+    },
     error: { color: 'warning', text: '전송 중 오류가 발생했습니다. 다시 시도해주세요.' },
   };
 
@@ -151,15 +146,18 @@ export default function ComposeModal({ open, onClose }: Props) {
     <Modal
       open={open}
       onClose={handleClose}
-      slotProps={{ backdrop: { sx: { backdropFilter: 'none', backgroundColor: 'transparent' } } }}
+      slotProps={{ backdrop: { sx: { backdropFilter: 'none', backgroundColor: 'rgba(18, 31, 42, 0.28)' } } }}
     >
       <ModalDialog
         size="lg"
         sx={{
-          width: { xs: '95vw', sm: 600 },
+          width: { xs: '95vw', sm: 620 },
           maxHeight: '90vh',
           p: 0,
           overflow: 'hidden',
+          borderRadius: 6,
+          borderColor: '#d9e1ea',
+          boxShadow: '0 22px 60px rgba(18, 31, 42, 0.22)',
         }}
       >
         <Box
@@ -169,12 +167,16 @@ export default function ComposeModal({ open, onClose }: Props) {
             display: 'flex',
             alignItems: 'center',
             borderBottom: '1px solid',
-            borderColor: 'divider',
+            borderColor: '#d9e1ea',
+            backgroundColor: '#f7f9fb',
           }}
         >
-          <Typography level="title-md" sx={{ flex: 1 }}>
-            새 메일 작성
-          </Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography level="title-md">새 메일 작성</Typography>
+            <Typography level="body-xs" color="neutral">
+              첨부파일은 전송 전 보안검사와 CDR 무해화를 거칩니다.
+            </Typography>
+          </Box>
           <ModalClose sx={{ position: 'static' }} onClick={handleClose} />
         </Box>
 
@@ -187,6 +189,7 @@ export default function ComposeModal({ open, onClose }: Props) {
               onChange={handleToChange}
               onBlur={handleToBlur}
               disabled={isBusy}
+              sx={{ borderRadius: 6 }}
             />
             {toError && (
               <FormHelperText>존재하지 않는 사용자입니다.</FormHelperText>
@@ -200,6 +203,7 @@ export default function ComposeModal({ open, onClose }: Props) {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               disabled={isBusy}
+              sx={{ borderRadius: 6 }}
             />
           </FormControl>
 
@@ -207,20 +211,20 @@ export default function ComposeModal({ open, onClose }: Props) {
 
           <FormControl sx={{ flex: 1 }}>
             <Textarea
-              placeholder="메일 내용을 입력하세요..."
+              placeholder="메일 내용을 입력하세요."
               minRows={8}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              sx={{ flex: 1 }}
+              sx={{ flex: 1, borderRadius: 6 }}
               disabled={isBusy}
             />
           </FormControl>
 
           {attachments.length > 0 && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
               {attachments.map((file, idx) => (
                 <Chip
-                  key={idx}
+                  key={`${file.name}-${idx}`}
                   size="md"
                   variant="soft"
                   color="neutral"
@@ -233,11 +237,12 @@ export default function ComposeModal({ open, onClose }: Props) {
                       onClick={() => handleRemoveAttachment(idx)}
                       disabled={isBusy}
                       sx={{ '--IconButton-size': '28px', pointerEvents: 'all' }}
+                      aria-label={`${file.name} 첨부 제거`}
                     >
                       <MaterialIcon><CloseRoundedIcon /></MaterialIcon>
                     </IconButton>
                   }
-                  sx={{ fontSize: 'sm', py: 0.5 }}
+                  sx={{ fontSize: 'sm', py: 0.5, borderRadius: 6 }}
                 >
                   {file.name}
                 </Chip>
@@ -260,7 +265,8 @@ export default function ComposeModal({ open, onClose }: Props) {
             gap: 1,
             alignItems: 'center',
             borderTop: '1px solid',
-            borderColor: 'divider',
+            borderColor: '#d9e1ea',
+            backgroundColor: '#fbfcfe',
           }}
         >
           <input
@@ -280,10 +286,10 @@ export default function ComposeModal({ open, onClose }: Props) {
             <MaterialIcon><AttachFileRoundedIcon /></MaterialIcon>
           </IconButton>
           <Box sx={{ flex: 1 }} />
-          {isBusy && (
+          {showSendProgressText && isBusy && (
             <Typography level="body-sm" color="neutral" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <CircularProgress size="sm" />
-              {sendState === 'scanning' ? '첨부파일 보안 검사 중...' : '전송 중...'}
+              {sendState === 'scanning' ? '첨부파일 보안검사 및 무해화 중...' : '전송 중...'}
             </Typography>
           )}
           <Button
@@ -293,6 +299,7 @@ export default function ComposeModal({ open, onClose }: Props) {
             onClick={handleSend}
             disabled={!isValid || isBusy}
             loading={isBusy}
+            sx={{ borderRadius: 6, fontWeight: 700 }}
           >
             전송
           </Button>
