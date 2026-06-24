@@ -34,7 +34,14 @@ class CDRSanitizer:
         self.steps_log = []
 
     def step1_strip_metadata(self, img: Image.Image) -> Image.Image:
-        """Copy pixel data into a fresh image object to drop EXIF/XMP/comment chunks."""
+        """Copy decoded pixels into a fresh object to drop metadata/chunks safely."""
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        elif img.mode == "LA":
+            img = img.convert("RGBA")
+        elif img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
         data = list(img.getdata())
         clean = Image.new(img.mode, img.size)
         clean.putdata(data)
