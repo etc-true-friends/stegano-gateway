@@ -1,5 +1,6 @@
 services:
   api-gateway:
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-api:latest
     build:
       context: .
       dockerfile: Dockerfile

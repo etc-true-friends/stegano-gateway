@@ -29,7 +29,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir python-multipart
 
 RUN if [ "$INSTALL_ALETHEIA" = "true" ]; then \
-      git clone --depth 1 https://github.com/daniellerch/aletheia /opt/aletheia && \
+      git clone --depth 1 --filter=blob:none --sparse https://github.com/daniellerch/aletheia /opt/aletheia && \
+      cd /opt/aletheia && \
+      git sparse-checkout set --no-cone /aletheia.py /aletheialib /requirements.txt /setup.py /setup.cfg /octave-requirements.txt /other-requirements.txt && \
       pip install --no-cache-dir -r /opt/aletheia/requirements.txt && \
       pip install --no-cache-dir /opt/aletheia ; \
     fi
