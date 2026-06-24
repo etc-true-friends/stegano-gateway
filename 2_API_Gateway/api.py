@@ -407,6 +407,113 @@ MAX_ARCHIVE_FILES = int(os.getenv("MAX_ARCHIVE_FILES", 200))
 MAX_ARCHIVE_IMAGES = int(os.getenv("MAX_ARCHIVE_IMAGES", 100))
 ALLOW_NON_IMAGE_IN_ARCHIVE = os.getenv("ALLOW_NON_IMAGE_IN_ARCHIVE", "false").lower() == "true"
 
+DANGEROUS_ATTACHMENT_EXTENSIONS = {
+    ".7z",
+    ".ace",
+    ".app",
+    ".bat",
+    ".chm",
+    ".cmd",
+    ".com",
+    ".cpl",
+    ".crt",
+    ".deb",
+    ".dll",
+    ".dmg",
+    ".exe",
+    ".gadget",
+    ".gzi",
+    ".hta",
+    ".img",
+    ".inf",
+    ".ins",
+    ".iso",
+    ".jar",
+    ".jnlp",
+    ".js",
+    ".jse",
+    ".lnk",
+    ".mde",
+    ".msc",
+    ".msi",
+    ".msp",
+    ".mst",
+    ".pif",
+    ".ps1",
+    ".ps1xml",
+    ".ps2",
+    ".ps2xml",
+    ".psc1",
+    ".psc2",
+    ".pub",
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".pyw",
+    ".rar",
+    ".reg",
+    ".rpm",
+    ".scr",
+    ".sct",
+    ".sh",
+    ".svg",
+    ".swf",
+    ".tar",
+    ".vbe",
+    ".vbs",
+    ".xll",
+    ".wsf",
+    ".wsh",
+    ".xz",
+    ".z",
+}
+
+MACRO_DOCUMENT_EXTENSIONS = {
+    ".docm",
+    ".dotm",
+    ".potm",
+    ".ppam",
+    ".ppsm",
+    ".pptm",
+    ".sldm",
+    ".xlsb",
+    ".xlsm",
+    ".xltm",
+}
+
+DECOY_DOCUMENT_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".hwp",
+    ".hwpx",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+}
+
+SOCIAL_ENGINEERING_KEYWORDS = (
+    "resume",
+    "cv",
+    "invoice",
+    "contract",
+    "quotation",
+    "estimate",
+    "application",
+    "이력서",
+    "입사지원",
+    "견적",
+    "견적서",
+    "계약",
+    "계약서",
+    "청구서",
+    "개인정보",
+)
+
 
 def _safe_archive_member_name(name: str) -> str:
     """
@@ -430,6 +537,136 @@ def _safe_disk_name(name: str) -> str:
         c if c.isalnum() or c in "._-" else "_"
         for c in os.path.basename(name)
     )[:160]
+
+
+def _attachment_policy_findings(filename: str, content_type: str, contents: bytes) -> list[str]:
+    """Return policy findings for non-image attachment risk signals."""
+    safe_name = os.path.basename(filename or "attachment")
+    lower_name = safe_name.lower()
+    suffixes = [suffix.lower() for suffix in PurePosixPath(lower_name).suffixes]
+    findings = []
+
+    if suffixes and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        findings.append(f"dangerous_extension:{suffixes[-1]}")
+
+    if suffixes and suffixes[-1] in MACRO_DOCUMENT_EXTENSIONS:
+        findings.append(f"macro_document:{suffixes[-1]}")
+
+    if len(suffixes) >= 2 and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        if any(suffix in DECOY_DOCUMENT_EXTENSIONS for suffix in suffixes[:-1]):
+            findings.append("double_extension_decoy")
+
+    if any(keyword in lower_name for keyword in SOCIAL_ENGINEERING_KEYWORDS):
+        findings.append("social_engineering_filename")
+
+    declared_type = (content_type or "").lower()
+    if declared_type.startswith("image/") and imghdr.what(None, h=contents) is None:
+        findings.append("mime_extension_mismatch")
+
+    return findings
+
+
+def _requires_policy_sanitization(findings: list[str]) -> bool:
+    return any(
+        finding.startswith("dangerous_extension:")
+        or finding.startswith("macro_document:")
+        or finding == "double_extension_decoy"
+        or finding == "mime_extension_mismatch"
+        for finding in findings
+    )
+
+
+def _write_policy_sanitized_notice(file_id: str, original_name: str, findings: list[str]) -> str:
+    safe_name = _safe_disk_name(original_name) or "attachment"
+    safe_stem = os.path.splitext(safe_name)[0] or "attachment"
+    output_name = f"{file_id}_{safe_stem}_sanitized.txt"
+    output_path = os.path.join(SANITIZED_DIR, output_name)
+
+    notice = "\n".join([
+        "/etc/friends Attachment Sanitization Notice",
+        "",
+        "The original attachment was replaced by policy-based sanitization.",
+        "Reason(s):",
+        *[f"- {finding}" for finding in findings],
+        "",
+        "The gateway does not deliver executable or script-like attachments.",
+        "If this file is business-critical, contact the security administrator.",
+    ])
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(notice)
+
+    return output_path
+
+
+def _find_sanitized_attachment_path(file_id: str, original_filename: str) -> str | None:
+    safe_name = _safe_disk_name(original_filename)
+    safe_name_no_ext = os.path.splitext(safe_name)[0]
+    preferred = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
+    if os.path.exists(preferred):
+        return preferred
+
+    prefix = f"{file_id}_"
+    suffix_prefix = f"{file_id}_{safe_name_no_ext}_sanitized."
+    for filename in os.listdir(SANITIZED_DIR):
+        if filename.startswith(suffix_prefix) or (filename.startswith(prefix) and "_sanitized." in filename):
+            candidate = os.path.join(SANITIZED_DIR, filename)
+            if os.path.isfile(candidate):
+                return candidate
+
+    return None
+
+
+def _scan_policy_attachment_bytes(contents: bytes, display_name: str, content_type: str, direction: str, file_id: str, findings: list[str]):
+    """Sanitize risky non-image attachments by replacing them with a safe notice file."""
+    safe_name = _safe_disk_name(display_name) or "attachment"
+    input_filename = f"{file_id}_{safe_name}"
+    input_path = os.path.join(UPLOAD_DIR, input_filename)
+
+    with open(input_path, "wb") as f:
+        f.write(contents)
+
+    output_path = _write_policy_sanitized_notice(file_id, display_name, findings)
+
+    quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
+    shutil.move(input_path, quarantine_path)
+
+    try:
+        os.chmod(quarantine_path, 0o440)
+    except Exception:
+        pass
+
+    try:
+        if S3_BUCKET:
+            s3.upload_file(quarantine_path, S3_BUCKET, f"quarantine/{input_filename}")
+            s3.upload_file(output_path, S3_BUCKET, f"sanitized/{os.path.basename(output_path)}")
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
+
+    _record_audit(
+        direction=direction,
+        original_name=display_name,
+        stego_prob_pct=100.0,
+        risk_level="HIGH",
+        verdict="SUSPICIOUS",
+        action="POLICY_SANITIZED",
+    )
+
+    sanitized_download_name = f"{os.path.splitext(safe_name)[0]}_sanitized.txt"
+
+    return {
+        "original_name": display_name,
+        "download_name": sanitized_download_name,
+        "stego_probability": 100.0,
+        "risk_level": "HIGH",
+        "verdict": "SUSPICIOUS",
+        "action": "POLICY_SANITIZED",
+        "policy": {
+            "findings": findings,
+            "sanitized_replacement": True,
+        },
+        "sanitized_path": output_path,
+    }
 
 
 def _record_audit(
@@ -694,6 +931,32 @@ async def scan_and_sanitize(
     # ZIP 압축파일이면 내부 이미지들을 개별 스캔 + CDR 후 sanitized zip 반환
     content_type = (file.content_type or "").lower()
     filename_lower = (file.filename or "").lower()
+    original_filename = file.filename or "stream"
+
+    policy_findings = _attachment_policy_findings(original_filename, content_type, contents)
+    if _requires_policy_sanitization(policy_findings):
+        result = _scan_policy_attachment_bytes(
+            contents=contents,
+            display_name=original_filename,
+            content_type=file.content_type or "application/octet-stream",
+            direction=direction,
+            file_id=file_id,
+            findings=policy_findings,
+        )
+        return {
+            "file_id": file_id,
+            "original_filename": result["download_name"],
+            "file_size": os.path.getsize(result["sanitized_path"]),
+            "mime_type": "text/plain",
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "model": "policy_engine",
+            "model_scores": [],
+            "aletheia": "SKIPPED",
+            "policy": result["policy"],
+            "sanitized_path": result["sanitized_path"],
+        }
 
     is_zip_payload = zipfile.is_zipfile(io.BytesIO(contents))
 
@@ -878,9 +1141,8 @@ async def send_mail(
             file_size = sizes[i] if i < len(sizes) else 0
 
             safe_name = _safe_disk_name(original_filename)
-            safe_name_no_ext = os.path.splitext(safe_name)[0]
-            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
-            stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
+            sanitized_path = _find_sanitized_attachment_path(file_id, original_filename)
+            stored_path = sanitized_path if sanitized_path else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
             # 발신자 SENT에 첨부파일 매핑
             cursor.execute("""
