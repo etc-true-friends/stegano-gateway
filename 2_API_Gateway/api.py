@@ -27,7 +27,7 @@ import boto3
 import json
 import zipfile
 from urllib.parse import quote
-
+import string
 
 # MSA 구조 경로 인식 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -71,15 +71,14 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS audit_logs (
+        CREATE TABLE IF NOT EXISTS cdr_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            direction TEXT,
-            original_name TEXT,
+            file_id TEXT,
+            file_name TEXT,
             stego_probability REAL,
-            risk_level TEXT,
-            verdict TEXT,
-            action TEXT
+            decoded_message TEXT,
+            rescan_probability REAL,
+            processed_at TEXT
         )
     """)
     conn.commit()
@@ -440,6 +439,7 @@ def _record_audit(
     verdict: str,
     action: str,
 ):
+
     """
     기존 audit_logs 테이블에 로그 저장.
     압축파일 내부 이미지 검사에서도 같은 로그 구조를 재사용한다.
@@ -549,6 +549,23 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         verdict=verdict,
         action=action,
     )
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO cdr_logs
+        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        file_id,
+        display_name,
+        round(stego_prob_pct, 1),
+        None,
+        None,
+        datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    ))
+    conn.commit()
+    conn.close()
+
 
     return {
         "original_name": display_name,
@@ -681,6 +698,62 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         media_type="application/zip",
         headers=headers,
     )
+
+# ─────────────────────────────────────────────────
+# LSB 디코더
+# RGB 채널의 최하위 비트를 읽어 NULL 문자까지 문자열 복원
+# CDR 전 원본 이미지의 은닉 메시지 검증 용도
+# ─────────────────────────────────────────────────
+def _decode_lsb_message(image_path: str):
+    from PIL import Image
+
+    try:
+        img = Image.open(image_path).convert("RGB")
+        bits = []
+
+        for r, g, b in img.getdata():
+            bits.extend([str(r & 1), str(g & 1), str(b & 1)])
+
+        chars = []
+        for i in range(0, len(bits), 8):
+            byte = bits[i:i + 8]
+            if len(byte) < 8:
+                break
+
+            ch = chr(int("".join(byte), 2))
+
+            if ch == "\x00":
+                break
+
+            chars.append(ch)
+
+            if len(chars) >= 500:
+                break
+
+        message = "".join(chars).strip()
+
+        if not message:
+            return None
+
+        printable_count = sum(1 for c in message if c in string.printable and c not in "\x0b\x0c")
+        printable_ratio = printable_count / max(len(message), 1)
+
+        if printable_ratio < 0.85:
+            return None
+
+        clean_message = "".join(
+            c for c in message
+            if c in string.printable and c not in "\x0b\x0c"
+        ).strip()
+
+        if len(clean_message) < 3:
+            return None
+
+        return clean_message[:500]
+
+    except Exception:
+        return None
+
 # ─────────────────────────────────────────────────
 # 망연계 파일 통제 코어 파이프라인 라우터
 # ─────────────────────────────────────────────────
@@ -1394,48 +1467,121 @@ async def get_cdr_status():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT *
-        FROM audit_logs
-        WHERE action IN ('BYPASS', 'QUARANTINE', 'ARCHIVE_BYPASS', 'ARCHIVE_QUARANTINE')
-        ORDER BY timestamp DESC
+        SELECT
+            file_id,
+            file_name,
+            stego_probability,
+            decoded_message,
+            rescan_probability,
+            processed_at
+        FROM cdr_logs
+        ORDER BY processed_at DESC
     """)
-    cdr_logs = [dict(row) for row in cursor.fetchall()]
+
+    rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    total_processed = len(cdr_logs)
+    return {
+        "total_count": len(rows),
+        "logs": rows
+    }
 
-    sanitized_logs = [
-        log for log in cdr_logs
-        if log["action"] in ("BYPASS", "ARCHIVE_BYPASS")
-    ]
+# ─────────────────────────────────────────────────
+# file_id 기반 저장 파일 탐색
+# 원본 업로드, 격리, 무해화 디렉토리에서 순차 검색
+# ─────────────────────────────────────────────────
+def _find_file_by_id(file_id: str, target: str = "original"):
+    search_dirs = []
 
-    failed_logs = [
-        log for log in cdr_logs
-        if log["action"] in ("FAILED", "CDR_FAILED")
-    ]
+    if target == "sanitized":
+        search_dirs = [SANITIZED_DIR]
+    else:
+        search_dirs = [UPLOAD_DIR, QUARANTINE_DIR]
 
-    success_rate = (
-        round((len(sanitized_logs) / total_processed) * 100, 1)
-        if total_processed > 0
-        else 0.0
-    )
+    for directory in search_dirs:
+        for filename in os.listdir(directory):
+            if filename.startswith(file_id):
+                return os.path.join(directory, filename), filename
 
-    recent_cdr_logs = [
-        {
-            "id": log["id"],
-            "fileName": log["original_name"],
-            "status": log["action"],
-            "processedAt": log["timestamp"]
-        }
-        for log in cdr_logs[:10]
-    ]
+    return None, None
+
+# ─────────────────────────────────────────────────
+# 스테가노그래피 디코딩
+# POST /decode
+# file_id 기반 원본 이미지에서 LSB 메시지 추출
+# ─────────────────────────────────────────────────
+@app.post("/decode")
+async def decode_stego_message(payload: dict):
+    file_id = payload.get("file_id")
+    target = payload.get("target", "original")
+
+    if not file_id:
+        raise HTTPException(status_code=400, detail="file_id is required")
+
+    matched_path, matched_name = _find_file_by_id(file_id, target)
+
+    if matched_path is None:
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+
+    decoded_message = _decode_lsb_message(matched_path)
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT file_name
+        FROM cdr_logs
+        WHERE file_id = ?
+        LIMIT 1
+    """, (file_id,))
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
 
     return {
-        "totalProcessed": total_processed,
-        "sanitized": len(sanitized_logs),
-        "failed": len(failed_logs),
-        "successRate": success_rate,
-        "recentCdrLogs": recent_cdr_logs
+        "file_id": file_id,
+        "file_name": row[0] if row else matched_name,
+        "decoded_message": decoded_message,
+        "message_length": len(decoded_message) if decoded_message else 0,
+        "decoder_type": "LSB"
+    }
+
+# ─────────────────────────────────────────────────
+# CDR 재스캔 결과 저장
+# POST /cdr/rescan
+# 재스캔 후 은닉 확률을 CDR 검증 로그에 반영
+# ─────────────────────────────────────────────────
+@app.post("/cdr/rescan")
+async def update_rescan_result(payload: dict):
+    file_id = payload.get("file_id")
+    rescan_probability = payload.get("rescan_probability")
+
+    if not file_id:
+        raise HTTPException(status_code=400, detail="file_id is required")
+
+    if rescan_probability is None:
+        raise HTTPException(status_code=400, detail="rescan_probability is required")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE cdr_logs
+        SET rescan_probability = ?
+        WHERE file_id = ?
+    """, (
+        round(float(rescan_probability), 1),
+        file_id
+    ))
+
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="CDR 검증 로그를 찾을 수 없습니다.")
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "file_id": file_id,
+        "rescan_probability": round(float(rescan_probability), 1)
     }
 
 # ─────────────────────────────────────────────────
