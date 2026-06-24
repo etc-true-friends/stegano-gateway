@@ -19,6 +19,7 @@ import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import PurePosixPath
@@ -82,6 +83,18 @@ def init_db():
             action TEXT
         )
     """)
+    # 탐지 임계값(격리/의심 경계)을 영속 저장하는 단일 행 테이블. id=1로 고정해 한 줄만 유지.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS policy_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            high_threshold REAL NOT NULL,
+            medium_threshold REAL NOT NULL
+        )
+    """)
+    # 최초 1회만 기존 하드코딩 값(75.0/30.0)으로 시드. 이미 값이 있으면(OR IGNORE) 덮어쓰지 않음.
+    cursor.execute(
+        "INSERT OR IGNORE INTO policy_settings (id, high_threshold, medium_threshold) VALUES (1, 75.0, 30.0)"
+    )
     conn.commit()
     conn.close()
 
@@ -90,6 +103,26 @@ def init_db():
     auth.seed_default_employee()
 
 init_db()
+
+
+def get_detection_thresholds() -> tuple[float, float]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT high_threshold, medium_threshold FROM policy_settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    return (row[0], row[1]) if row else (75.0, 30.0)
+
+
+def set_detection_thresholds(high_threshold: float, medium_threshold: float) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE policy_settings SET high_threshold = ?, medium_threshold = ? WHERE id = 1",
+        (high_threshold, medium_threshold),
+    )
+    conn.commit()
+    conn.close()
 
 app.include_router(auth.router)
 
@@ -296,14 +329,20 @@ def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
     }
 
 
-def _classify_scan(stego_prob_pct: float, aletheia_result: dict, ensemble_result: dict | None = None):
+def _classify_scan(
+    stego_prob_pct: float,
+    aletheia_result: dict,
+    ensemble_result: dict | None = None,
+    high_threshold: float = 75.0,
+    medium_threshold: float = 30.0,
+):
     aletheia_suspicious = bool(aletheia_result.get("suspicious"))
     ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
     ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
 
-    if ensemble_high or stego_prob_pct >= 75.0 or aletheia_suspicious:
+    if ensemble_high or stego_prob_pct >= high_threshold or aletheia_suspicious:
         return "HIGH", "SUSPICIOUS", "QUARANTINE"
-    if ensemble_suspicious or stego_prob_pct >= 30.0:
+    if ensemble_suspicious or stego_prob_pct >= medium_threshold:
         return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
     return "LOW", "CLEAN", "BYPASS"
 
@@ -312,6 +351,32 @@ def _aletheia_header_value(aletheia_result: dict) -> str:
     if not aletheia_result.get("available"):
         return "UNAVAILABLE"
     return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
+
+
+class ThresholdUpdateRequest(BaseModel):
+    high_threshold: float
+    medium_threshold: float
+
+
+# ─────────────────────────────────────────────────
+# 정책 관리: 탐지 임계값 설정
+# ─────────────────────────────────────────────────
+@app.get("/policy/threshold")
+def get_threshold():
+    high_threshold, medium_threshold = get_detection_thresholds()
+    return {"high_threshold": high_threshold, "medium_threshold": medium_threshold}
+
+
+@app.put("/policy/threshold")
+def update_threshold(payload: ThresholdUpdateRequest):
+    if not (0.0 <= payload.medium_threshold < payload.high_threshold <= 100.0):
+        raise HTTPException(
+            status_code=400,
+            detail="임계값은 0 <= medium_threshold < high_threshold <= 100 조건을 만족해야 합니다.",
+        )
+    set_detection_thresholds(payload.high_threshold, payload.medium_threshold)
+    return {"high_threshold": payload.high_threshold, "medium_threshold": payload.medium_threshold}
+
 
 @app.get("/")
 def read_root():
@@ -755,10 +820,13 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     ensemble_result = _predict_ensemble(img_tensor)
     stego_prob_pct = ensemble_result["stego_prob_pct"]
     aletheia_result = _run_aletheia(input_path)
+    high_threshold, medium_threshold = get_detection_thresholds()
     risk_level, verdict, action = _classify_scan(
         stego_prob_pct,
         aletheia_result,
         ensemble_result,
+        high_threshold,
+        medium_threshold,
     )
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"

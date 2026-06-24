@@ -5,6 +5,7 @@ import DashboardPage from './pages/DashboardPage';
 import AuditLogPage from './pages/AuditLogPage';
 import DailyStatsPage from './pages/DailyStatsPage';
 import FileTypeReportPage from './pages/FileTypeReportPage';
+import ThresholdSettingsPage from './pages/ThresholdSettingsPage';
 import { useAuditLog } from './hooks/useAuditLog';
 import './App.css';
 
@@ -22,6 +23,7 @@ export default function App() {
           {page === 'audit' && <AuditLogPage logs={audit.logs} />}
           {page === 'daily-stats' && <DailyStatsPage audit={audit} />}
           {page === 'file-type' && <FileTypeReportPage audit={audit} />}
+          {page === 'threshold' && <ThresholdSettingsPage />}
         </main>
       </div>
     </div>
