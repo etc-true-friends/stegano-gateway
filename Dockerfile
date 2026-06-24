@@ -6,15 +6,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     git \
     libmagic1 \
-    build-essential \
-    imagemagick \
-    liboctave-dev \
-    octave \
-    octave-image \
-    octave-nan \
-    octave-signal \
-    outguess \
-    steghide \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,9 +23,10 @@ RUN if [ "$INSTALL_ALETHEIA" = "true" ]; then \
       git clone --depth 1 --filter=blob:none --sparse https://github.com/daniellerch/aletheia /opt/aletheia && \
       cd /opt/aletheia && \
       git sparse-checkout set --no-cone /aletheia.py /aletheialib /requirements.txt /setup.py /setup.cfg /octave-requirements.txt /other-requirements.txt && \
-      pip install --no-cache-dir -r /opt/aletheia/requirements.txt && \
-      pip install --no-cache-dir /opt/aletheia ; \
+      pip install --no-cache-dir imageio scipy pandas ; \
     fi
+
+ENV PYTHONPATH="/opt/aletheia:${PYTHONPATH}"
 
 COPY 2_API_Gateway/ .
 COPY 1_AI_Engine/ ./1_AI_Engine/

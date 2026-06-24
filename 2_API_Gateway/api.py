@@ -217,9 +217,18 @@ def _run_aletheia(image_path: str) -> dict:
             if part
         ).strip()
         output_lower = output.lower()
-        suspicious = any(
-            keyword in output_lower
-            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        clean_markers = (
+            "no hidden data found",
+            "no stego",
+            "not detected",
+            "clean",
+        )
+        suspicious = (
+            not any(marker in output_lower for marker in clean_markers)
+            and any(
+                keyword in output_lower
+                for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+            )
         )
 
         return {
