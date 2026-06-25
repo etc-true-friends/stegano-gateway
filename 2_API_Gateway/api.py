@@ -206,6 +206,7 @@ ALETHEIA_SUSPICIOUS_KEYWORDS = (
     "positive",
     "embedding",
 )
+ALETHEIA_LOSSLESS_FORMATS = {"png", "bmp", "tiff", "tif"}
 
 
 def _resolve_aletheia_command():
@@ -223,11 +224,20 @@ def _resolve_aletheia_command():
     return None
 
 
-def _run_aletheia(image_path: str) -> dict:
+def _run_aletheia(image_path: str, image_format: str | None = None) -> dict:
     """
     Run Aletheia steganalysis when the CLI is available.
     The gateway must keep serving files even if Aletheia is missing or fails.
     """
+    normalized_format = (image_format or "").lower().replace("jpeg", "jpg")
+    if normalized_format and normalized_format not in ALETHEIA_LOSSLESS_FORMATS:
+        return {
+            "available": True,
+            "skipped": True,
+            "suspicious": False,
+            "reason": f"Aletheia SPA skipped for lossy image format: {normalized_format}",
+        }
+
     command = _resolve_aletheia_command()
     if not command:
         return {
@@ -347,6 +357,8 @@ def _classify_scan(
 
 
 def _aletheia_header_value(aletheia_result: dict) -> str:
+    if aletheia_result.get("skipped"):
+        return "SKIPPED"
     if not aletheia_result.get("available"):
         return "UNAVAILABLE"
     return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
@@ -819,7 +831,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
 
     ensemble_result = _predict_ensemble(img_tensor)
     stego_prob_pct = ensemble_result["stego_prob_pct"]
-    aletheia_result = _run_aletheia(input_path)
+    aletheia_result = _run_aletheia(input_path, img_format)
     high_threshold, medium_threshold = get_detection_thresholds()
     risk_level, verdict, action = _classify_scan(
         stego_prob_pct,
