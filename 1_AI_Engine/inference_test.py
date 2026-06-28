@@ -30,23 +30,42 @@ def load_model(checkpoint_path):
     model.load_state_dict(state_dict, strict=True)
     model.to(device)
     model.eval()
-    return model, device
+    return model, device, checkpoint
 
 
-def predict_image(model, device, image_path):
+def resolve_input_mode(checkpoint, checkpoint_path, requested_mode):
+    if requested_mode != "auto":
+        return requested_mode
+    if isinstance(checkpoint, dict):
+        opt = checkpoint.get("opt")
+        mode = getattr(opt, "input_mode", None)
+        if isinstance(mode, str) and mode.strip():
+            return mode.strip().lower()
+    name = str(checkpoint_path).lower()
+    return "lsb" if "edge_adaptive_lsb" in name else "rgb"
+
+
+def preprocess_image(image_path, input_mode):
+    with Image.open(image_path) as pil_img:
+        pil_img = pil_img.convert("RGB")
+        if pil_img.size != (256, 256):
+            resample = Image.Resampling.NEAREST if input_mode == "lsb" else Image.Resampling.BILINEAR
+            pil_img = pil_img.resize((256, 256), resample)
+        img = np.array(pil_img)
+
+    if input_mode == "lsb":
+        input_tensor = torch.from_numpy((img.astype(np.uint8) & 1).astype(np.float32)).permute(2, 0, 1)
+    else:
+        input_tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+    return input_tensor.unsqueeze(0)
+
+
+def predict_image(model, device, image_path, input_mode):
     if not os.path.exists(image_path):
         return {"error": f"이미지 파일을 찾을 수 없습니다: {image_path}"}
 
     try:
-        with Image.open(image_path) as pil_img:
-            pil_img = pil_img.convert("RGB")
-            if pil_img.size != (256, 256):
-                pil_img = pil_img.resize((256, 256), Image.Resampling.BILINEAR)
-            img = np.array(pil_img)
-
-        input_tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-        input_tensor = input_tensor.unsqueeze(0).to(device)
-
+        input_tensor = preprocess_image(image_path, input_mode).to(device)
     except Exception as e:
         return {"error": f"이미지 전처리 중 에러 발생: {e}"}
 
@@ -70,6 +89,7 @@ def parse_args():
     parser.add_argument("--checkpoint_path", default="../4_Local_Workspace/checkpoints/best_srnet_finetuned.pt")
     parser.add_argument("--img_dir", default="./test_images")
     parser.add_argument("--images", nargs="*", default=["dog.png", "quokka.png", "stego_dog.png", "stego_quokka.png"])
+    parser.add_argument("--input_mode", choices=["auto", "rgb", "lsb"], default="auto")
     return parser.parse_args()
 
 
@@ -77,13 +97,15 @@ if __name__ == "__main__":
     opt = parse_args()
 
     print("[*] 블라인드 크로스 테스트 엔진 가동 중...")
-    model, device = load_model(opt.checkpoint_path)
+    model, device, checkpoint = load_model(opt.checkpoint_path)
+    input_mode = resolve_input_mode(checkpoint, opt.checkpoint_path, opt.input_mode)
+    print(f"[+] Input mode: {input_mode}")
 
     print("=== 탐지 결과 성적표 ===")
     for image_name in opt.images:
         path = os.path.join(opt.img_dir, image_name)
         print(f"[*] 분석 대상: {image_name}")
-        result = predict_image(model, device, path)
+        result = predict_image(model, device, path, input_mode)
         if "error" in result:
             print(f" -> {result['error']}\n")
         else:
