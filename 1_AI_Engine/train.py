@@ -73,22 +73,28 @@ if __name__ == "__main__":
     train_size = min(opt.train_size, actual_train_size)
     val_size = min(opt.val_size, actual_val_size)
 
+    train_transform = transforms.Compose([
+        transforms.ToTensor(),
+    ]) if opt.input_mode == "rgb" else None
+
     train_data = dataset.DatasetLoad(
         cover_path=opt.cover_path,
         stego_path=opt.stego_path,
         size=train_size,  # 요청한 train_size와 실제 파일 개수 중 작은 값 사용
-        transform=transforms.Compose([
-            transforms.ToTensor(),
-        ]),
+        transform=train_transform,
+        input_mode=opt.input_mode,
     )
+
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+    ]) if opt.input_mode == "rgb" else None
 
     val_data = dataset.DatasetLoad(
         cover_path=opt.valid_cover_path,
         stego_path=opt.valid_stego_path,
         size=val_size,    # 요청한 val_size와 실제 파일 개수 중 작은 값 사용
-        transform=transforms.Compose([
-            transforms.ToTensor(),
-        ]),
+        transform=val_transform,
+        input_mode=opt.input_mode,
     )
 
     print(f"[+] 데이터 감지 완료 -> Train pairs: {len(train_data)}, Validation pairs: {len(val_data)}")
@@ -106,6 +112,7 @@ if __name__ == "__main__":
         f"[+] Device: {device} / batch_size={opt.batch_size} / "
         f"num_workers={opt.num_workers} / AMP={opt.use_amp and device.type == 'cuda'}"
     )
+    print(f"[+] Input mode: {opt.input_mode} / best_metric={opt.best_metric} / weight_decay={opt.weight_decay}")
     train_loader = DataLoader(train_data, batch_size=opt.batch_size, shuffle=True, **loader_kwargs)
     valid_loader = DataLoader(val_data, batch_size=opt.batch_size, shuffle=False, **loader_kwargs)
 
@@ -123,26 +130,31 @@ if __name__ == "__main__":
         lr=opt.lr,
         betas=(0.9, 0.999),
         eps=1e-8,
-        weight_decay=2e-4, 
+        weight_decay=opt.weight_decay, 
     )
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode="min",
         factor=0.5,
-        patience=5,
-        threshold=1e-5,
+        patience=3,
+        threshold=5e-5,
         cooldown=1,
     )
 
     os.makedirs(opt.checkpoints_dir, exist_ok=True)
     best_model_path = os.path.join(opt.checkpoints_dir, "best_srnet_model.pt")
+    best_loss_model_path = os.path.join(opt.checkpoints_dir, "best_loss_model.pt")
+    best_acc_model_path = os.path.join(opt.checkpoints_dir, "best_acc_model.pt")
+    best_balanced_model_path = os.path.join(opt.checkpoints_dir, "best_balanced_model.pt")
     metrics_csv_path = os.path.join(opt.checkpoints_dir, "training_metrics.csv")
     
     check_point = opt.resume_epoch if opt.resume_epoch is not None else latest_checkpoint(opt.checkpoints_dir)
     best_valid_loss = float("inf")
-    min_epochs_before_stop = 40
-    patience = 20
+    best_valid_acc = -1.0
+    best_balanced_score = -1e9
+    min_epochs_before_stop = 25
+    patience = 12
     patience_counter = 0
 
     if not check_point:
@@ -159,11 +171,15 @@ if __name__ == "__main__":
         except Exception:
             print("[!] 스케줄러 저장 형식 변경 감지: 새 스케줄러로 이어서 학습합니다.")
         best_valid_loss = ckpt.get("best_valid_loss", float("inf"))
+        best_valid_acc = ckpt.get("best_valid_acc", ckpt.get("valid_accuracy", -1.0))
+        best_balanced_score = ckpt.get("best_balanced_score", -1e9)
         print(f"[*] 에폭 {ckpt['epoch']}부터 학습을 재개합니다. (Resume Training)")
 
     if os.path.exists(best_model_path):
         best_ckpt = torch.load(best_model_path, map_location=device, weights_only=False)
-        best_valid_loss = min(best_valid_loss, best_ckpt.get("best_valid_loss", float("inf")))
+        best_valid_loss = min(best_valid_loss, best_ckpt.get("best_valid_loss", best_ckpt.get("valid_loss", float("inf"))))
+        best_valid_acc = max(best_valid_acc, best_ckpt.get("best_valid_acc", best_ckpt.get("valid_accuracy", -1.0)))
+        best_balanced_score = max(best_balanced_score, best_ckpt.get("best_balanced_score", -1e9))
 
     if START_EPOCH == 1 or not os.path.exists(metrics_csv_path):
         with open(metrics_csv_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -176,6 +192,8 @@ if __name__ == "__main__":
                 "valid_accuracy",
                 "learning_rate",
                 "elapsed_seconds",
+                "best_metric",
+                "balanced_score",
             ])
 
     training_start_time = time.time()
@@ -260,6 +278,10 @@ if __name__ == "__main__":
             avg_valid_loss = sum(validation_loss) / len(validation_loss)
             avg_train_acc = sum(training_accuracy) / len(training_accuracy)
             avg_valid_acc = sum(validation_accuracy) / len(validation_accuracy)
+            generalization_gap = max(0.0, avg_train_acc - avg_valid_acc)
+            # Balanced score for edge LSB: accuracy-first, but reject very unstable models.
+            # This favors 78~80% candidates while still penalizing high loss and train/valid gap.
+            balanced_score = avg_valid_acc - (2.0 * avg_valid_loss) - (0.10 * generalization_gap)
 
             message = (
                 f"Epoch: {epoch}. "
@@ -280,6 +302,8 @@ if __name__ == "__main__":
                     avg_valid_acc,
                     optimizer.param_groups[0]["lr"],
                     elapsed_seconds,
+                    opt.best_metric,
+                    balanced_score,
                 ])
 
             scheduler.step(avg_valid_loss)
@@ -291,6 +315,11 @@ if __name__ == "__main__":
                 "valid_loss": avg_valid_loss,
                 "train_accuracy": avg_train_acc,
                 "valid_accuracy": avg_valid_acc,
+                "generalization_gap": generalization_gap,
+                "balanced_score": balanced_score,
+                "best_valid_acc": max(best_valid_acc, avg_valid_acc),
+                "best_balanced_score": max(best_balanced_score, balanced_score),
+                "best_metric": opt.best_metric,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "scheduler_state_dict": scheduler.state_dict(),
@@ -301,23 +330,55 @@ if __name__ == "__main__":
             saver(state, opt.checkpoints_dir, epoch)
             print(f" Checkpoint saved -> {os.path.join(opt.checkpoints_dir, f'net_{epoch}.pt')}")
 
-            if avg_valid_loss < best_valid_loss:
+            improved_loss = avg_valid_loss < best_valid_loss
+            improved_acc = avg_valid_acc > best_valid_acc
+            improved_balanced = balanced_score > best_balanced_score
+
+            if improved_loss:
                 best_valid_loss = avg_valid_loss
-                patience_counter = 0
                 state["best_valid_loss"] = best_valid_loss
+                torch.save(state, best_loss_model_path)
+
+            if improved_acc:
+                best_valid_acc = avg_valid_acc
+                state["best_valid_acc"] = best_valid_acc
+                torch.save(state, best_acc_model_path)
+
+            if improved_balanced:
+                best_balanced_score = balanced_score
+                state["best_balanced_score"] = best_balanced_score
+                torch.save(state, best_balanced_model_path)
+
+            if opt.best_metric == "acc":
+                improved_main = improved_acc
+                main_reason = "Valid Acc 갱신"
+            elif opt.best_metric == "balanced":
+                improved_main = improved_balanced
+                main_reason = "Balanced Score 갱신"
+            else:
+                improved_main = improved_loss
+                main_reason = "Valid Loss 갱신"
+
+            if improved_main:
+                patience_counter = 0
                 torch.save(state, best_model_path)
-                print(f" [BEST] 베스트 모델 저장 완료 (Valid Loss 갱신) -> {best_model_path}")
+                print(
+                    f" [BEST] 베스트 모델 저장 완료 ({main_reason}) -> {best_model_path}\n"
+                    f"        best_loss={best_valid_loss:.5f}, best_acc={best_valid_acc:.2f}, "
+                    f"best_balanced={best_balanced_score:.4f}"
+                )
             else:
                 patience_counter += 1
                 print(
-                    f" [경고] Valid Loss 정체 "
-                    f"(카운트: {patience_counter}/{patience}, 최소 학습 에폭: {min_epochs_before_stop})"
+                    f" [경고] 베스트 기준 정체 "
+                    f"(metric={opt.best_metric}, 카운트: {patience_counter}/{patience}, "
+                    f"최소 학습 에폭: {min_epochs_before_stop})"
                 )
-                
+
                 if epoch >= min_epochs_before_stop and patience_counter >= patience:
                     print(f"\n[!] Early Stopping 발동! (에폭 {epoch}) 과적합 방지를 위해 학습을 종료합니다.")
                     break
-            
+
             del images, labels, outputs, loss
             torch.cuda.empty_cache()
             gc.collect()
