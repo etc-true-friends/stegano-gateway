@@ -979,7 +979,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
 def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file_id: str):
     """
     ZIP 내부 이미지를 전부 검사하고,
-    CDR 처리된 이미지들만 모아서 sanitized ZIP으로 다시 반환한다.
+    CDR 처리된 이미지들만 모아서 sanitized ZIP으로 저장한다.
     """
     if len(contents) > MAX_ARCHIVE_SIZE:
         raise HTTPException(status_code=413, detail="Archive too large")
@@ -1074,23 +1074,15 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         file_id=file_id,
     )
 
-    headers = {
-        "X-Gateway-Verdict": overall_verdict,
-        "X-Gateway-Risk-Level": overall_risk,
-        "X-Gateway-Stego-Prob": f"{max_prob:.1f}%",
-        "X-Gateway-File-ID": str(file_id),
-        "X-Gateway-Archive-Images": str(image_count),
-        "X-Gateway-Archive-Suspicious": str(suspicious_count),
-        "X-Gateway-Archive-Mode": "ZIP_IMAGE_CDR",
-        "Access-Control-Expose-Headers": "*",
+    return {
+        "sanitized_path": result_zip_path,
+        "download_name": result_zip_name,
+        "verdict": overall_verdict,
+        "risk_level": overall_risk,
+        "stego_probability": max_prob,
+        "image_count": image_count,
+        "suspicious_count": suspicious_count,
     }
-
-    return FileResponse(
-        path=result_zip_path,
-        filename=result_zip_name,
-        media_type="application/zip",
-        headers=headers,
-    )
 
 # ─────────────────────────────────────────────────
 # LSB 디코더
@@ -1157,7 +1149,7 @@ async def scan_and_sanitize(
 ):
     file_id = str(uuid.uuid4())[:8]
     contents = await file.read()
-    # ZIP 압축파일이면 내부 이미지들을 개별 스캔 + CDR 후 sanitized zip 반환
+    # ZIP 압축파일이면 내부 이미지를 개별 스캔 + CDR 후 sanitized zip 메타데이터를 반환
     content_type = (file.content_type or "").lower()
     filename_lower = (file.filename or "").lower()
     original_filename = file.filename or "stream"
@@ -1193,12 +1185,29 @@ async def scan_and_sanitize(
       if not is_zip_payload:
         raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
 
-      return _scan_archive_bytes(
+      result = _scan_archive_bytes(
         contents,
         file.filename or "archive.zip",
         direction,
         file_id
-    )
+      )
+      return {
+          "file_id": file_id,
+          "original_filename": result["download_name"],
+          "file_size": os.path.getsize(result["sanitized_path"]),
+          "mime_type": "application/zip",
+          "verdict": result["verdict"],
+          "risk_level": result["risk_level"],
+          "stego_probability": result["stego_probability"],
+          "model": "archive_cdr",
+          "model_scores": [],
+          "aletheia": "SKIPPED_ARCHIVE",
+          "archive": {
+              "image_count": result["image_count"],
+              "suspicious_count": result["suspicious_count"],
+          },
+          "sanitized_path": result["sanitized_path"],
+      }
     
     try:
         result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
@@ -1271,6 +1280,41 @@ async def send_mail(
 
     sender_value = sender.strip()
     recipient_value = recipient.strip()
+
+    saved_attachment_meta = []
+    if attachment_ids:
+        try:
+            ids = _json.loads(attachment_ids)
+            filenames = _json.loads(attachment_filenames) if attachment_filenames else []
+            mimetypes = _json.loads(attachment_mimetypes) if attachment_mimetypes else []
+            sizes = _json.loads(attachment_sizes) if attachment_sizes else []
+        except (_json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid attachment metadata")
+
+        if not isinstance(ids, list) or not all(isinstance(values, list) for values in (filenames, mimetypes, sizes)):
+            raise HTTPException(status_code=400, detail="Invalid attachment metadata")
+
+        for i, file_id in enumerate(ids):
+            if not isinstance(file_id, str) or not file_id.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment file_id")
+
+            original_filename = filenames[i] if i < len(filenames) else "unknown"
+            mime_type = mimetypes[i] if i < len(mimetypes) else "application/octet-stream"
+            file_size = sizes[i] if i < len(sizes) else 0
+
+            if not isinstance(original_filename, str) or not original_filename.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment filename")
+            if not isinstance(mime_type, str) or not mime_type.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment mimetype")
+            if not isinstance(file_size, int):
+                raise HTTPException(status_code=400, detail="Invalid attachment size")
+
+            saved_attachment_meta.append({
+                "file_id": file_id.strip(),
+                "original_filename": original_filename,
+                "mime_type": mime_type,
+                "file_size": file_size,
+            })
 
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -1360,40 +1404,35 @@ async def send_mail(
 
     # 스캔 단계에서 저장된 파일을 file_id 기반으로 mail_attachment에 매핑
     saved_attachments = []
-    if attachment_ids:
-        ids = _json.loads(attachment_ids)
-        filenames = _json.loads(attachment_filenames) if attachment_filenames else []
-        mimetypes = _json.loads(attachment_mimetypes) if attachment_mimetypes else []
-        sizes = _json.loads(attachment_sizes) if attachment_sizes else []
+    for attachment in saved_attachment_meta:
+        file_id = attachment["file_id"]
+        original_filename = attachment["original_filename"]
+        mime_type = attachment["mime_type"]
+        file_size = attachment["file_size"]
 
-        for i, file_id in enumerate(ids):
-            original_filename = filenames[i] if i < len(filenames) else "unknown"
-            mime_type = mimetypes[i] if i < len(mimetypes) else "application/octet-stream"
-            file_size = sizes[i] if i < len(sizes) else 0
+        safe_name = _safe_disk_name(original_filename)
+        sanitized_path = _find_sanitized_attachment_path(file_id, original_filename)
+        stored_path = sanitized_path if sanitized_path else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
-            safe_name = _safe_disk_name(original_filename)
-            sanitized_path = _find_sanitized_attachment_path(file_id, original_filename)
-            stored_path = sanitized_path if sanitized_path else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
+        # 발신자 SENT에 첨부파일 매핑
+        cursor.execute("""
+            INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
 
-            # 발신자 SENT에 첨부파일 매핑
+        # 수신자 INBOX에도 동일하게 첨부파일 매핑
+        if inbox_mail_id:
             cursor.execute("""
                 INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
+            """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
 
-            # 수신자 INBOX에도 동일하게 첨부파일 매핑
-            if inbox_mail_id:
-                cursor.execute("""
-                    INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
-
-            saved_attachments.append({
-                "file_id": file_id,
-                "original_file_name": original_filename,
-                "file_size": file_size,
-                "mime_type": mime_type,
-            })
+        saved_attachments.append({
+            "file_id": file_id,
+            "original_file_name": original_filename,
+            "file_size": file_size,
+            "mime_type": mime_type,
+        })
 
         _attach_mail_participants_to_audit(ids, sender_email, recipient_email)
 
