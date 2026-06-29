@@ -35,7 +35,7 @@ export function getVerdictLabel(verdict) {
 export function getActionLabel(action) {
   const normalized = normalizeAction(action);
   if (normalized === 'BYPASS' || normalized === 'PASSED') return '통과';
-  if (isPolicyBlockedLog({ action })) return '정책 차단/대체';
+  if (isPolicyBlockedLog({ action })) return '정책 격리/대체';
   if (normalized.includes('QUARANTINE') || normalized.includes('SANITIZED') || normalized.includes('CDR')) {
     return 'CDR 무해화';
   }
