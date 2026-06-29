@@ -72,6 +72,21 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            direction TEXT,
+            original_name TEXT,
+            stego_probability REAL,
+            risk_level TEXT,
+            verdict TEXT,
+            action TEXT,
+            file_id TEXT,
+            sender_email TEXT,
+            recipient_email TEXT
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS cdr_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id TEXT,
@@ -94,6 +109,15 @@ def init_db():
     cursor.execute(
         "INSERT OR IGNORE INTO policy_settings (id, high_threshold, medium_threshold) VALUES (1, 75.0, 30.0)"
     )
+    cursor.execute("PRAGMA table_info(audit_logs)")
+    audit_columns = {row[1] for row in cursor.fetchall()}
+    for column_name, column_type in {
+        "file_id": "TEXT",
+        "sender_email": "TEXT",
+        "recipient_email": "TEXT",
+    }.items():
+        if column_name not in audit_columns:
+            cursor.execute(f"ALTER TABLE audit_logs ADD COLUMN {column_name} {column_type}")
     conn.commit()
     conn.close()
 
@@ -465,7 +489,20 @@ def get_audit():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT timestamp, direction, original_name, stego_probability, risk_level, verdict, action FROM audit_logs")
+    cursor.execute("""
+        SELECT
+            timestamp,
+            direction,
+            original_name,
+            stego_probability,
+            risk_level,
+            verdict,
+            action,
+            file_id,
+            sender_email,
+            recipient_email
+        FROM audit_logs
+    """)
     rows = cursor.fetchall()
     conn.close()
 
@@ -735,6 +772,7 @@ def _scan_policy_attachment_bytes(contents: bytes, display_name: str, content_ty
         risk_level="HIGH",
         verdict="SUSPICIOUS",
         action="POLICY_SANITIZED",
+        file_id=file_id,
     )
 
     sanitized_download_name = f"{os.path.splitext(safe_name)[0]}_sanitized.txt"
@@ -761,6 +799,9 @@ def _record_audit(
     risk_level: str,
     verdict: str,
     action: str,
+    file_id: str | None = None,
+    sender_email: str | None = None,
+    recipient_email: str | None = None,
 ):
 
     """
@@ -773,8 +814,8 @@ def _record_audit(
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO audit_logs
-        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action, file_id, sender_email, recipient_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         timestamp_str,
         direction,
@@ -783,7 +824,31 @@ def _record_audit(
         risk_level,
         verdict,
         action,
+        file_id,
+        sender_email,
+        recipient_email,
     ))
+    conn.commit()
+    conn.close()
+
+
+def _attach_mail_participants_to_audit(file_ids: list[str], sender_email: str, recipient_email: str) -> None:
+    if not file_ids:
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    for file_id in file_ids:
+        cursor.execute("""
+            UPDATE audit_logs
+            SET sender_email = ?, recipient_email = ?
+            WHERE file_id = ? OR file_id LIKE ?
+        """, (
+            sender_email,
+            recipient_email,
+            file_id,
+            f"{file_id}_%",
+        ))
     conn.commit()
     conn.close()
 
@@ -874,6 +939,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         risk_level=risk_level,
         verdict=verdict,
         action=action,
+        file_id=file_id,
     )
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -1005,6 +1071,7 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         risk_level=overall_risk,
         verdict=overall_verdict,
         action=f"ARCHIVE_{overall_action}",
+        file_id=file_id,
     )
 
     headers = {
@@ -1224,6 +1291,7 @@ async def send_mail(
         raise HTTPException(status_code=404, detail="발신자를 찾을 수 없습니다.")
 
     sender_id = sender_row["id"]
+    sender_email = sender_row["email"] or sender_value
 
     # 수신자 username 조회
     cursor.execute("""
@@ -1240,6 +1308,7 @@ async def send_mail(
         raise HTTPException(status_code=404, detail="수신자를 찾을 수 없습니다.")
 
     recipient_id = recipient_row["id"]
+    recipient_email = recipient_row["email"] or recipient_value
 
     # 발신자 SENT 메일함 조회, 없으면 생성
     cursor.execute(
@@ -1326,13 +1395,15 @@ async def send_mail(
                 "mime_type": mime_type,
             })
 
+        _attach_mail_participants_to_audit(ids, sender_email, recipient_email)
+
     conn.commit()
     conn.close()
 
     return {
         "id": mail_id,
-        "sender": sender_value,
-        "recipient": recipient_value,
+        "sender": sender_email,
+        "recipient": recipient_email,
         "sender_id": sender_id,
         "recipient_id": recipient_id,
         "mailbox_id": mailbox_id,
