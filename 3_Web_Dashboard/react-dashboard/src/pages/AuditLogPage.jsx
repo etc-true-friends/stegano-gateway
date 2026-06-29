@@ -2,12 +2,27 @@ import PanelCard from '../components/common/PanelCard';
 import { useState } from 'react';
 import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../utils/auditLabels';
 
+function getParticipantText(log) {
+  const sender = log.sender_email || '-';
+  const recipient = log.recipient_email || '-';
+  if (sender === '-' && recipient === '-') return '-';
+  return `${sender} -> ${recipient}`;
+}
+
 export default function AuditLogPage({ logs }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('전체');
 
   const filtered = [...logs].reverse().filter(log => {
-    const matchSearch = (log.original_name || '').toLowerCase().includes(search.toLowerCase());
+    const keyword = search.toLowerCase();
+    const searchable = [
+      log.original_name,
+      log.sender_email,
+      log.recipient_email,
+      log.direction,
+      log.action,
+    ].join(' ').toLowerCase();
+    const matchSearch = searchable.includes(keyword);
     const matchFilter = filter === '전체' || log.verdict === filter || (filter === 'POLICY' && isPolicyBlockedLog(log));
     return matchSearch && matchFilter;
   });
@@ -18,7 +33,7 @@ export default function AuditLogPage({ logs }) {
         <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
           <input
             type="text"
-            placeholder="파일명 검색..."
+            placeholder="파일명, 발신자, 수신자 검색..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
@@ -57,6 +72,8 @@ export default function AuditLogPage({ logs }) {
             <thead>
               <tr>
                 <th>시각</th>
+                <th>방향</th>
+                <th>메일 경로</th>
                 <th>파일명</th>
                 <th>위험도(%)</th>
                 <th>등급</th>
@@ -66,15 +83,17 @@ export default function AuditLogPage({ logs }) {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="empty-state">검색 결과가 없습니다</td></tr>
+                <tr><td colSpan={8} className="empty-state">검색 결과가 없습니다</td></tr>
               ) : (
                 filtered.map((log, i) => {
                   const verdict = log.verdict || '-';
                   const isClean = verdict === 'CLEAN';
                   const isPolicy = isPolicyBlockedLog(log);
                   return (
-                    <tr key={i} className={isClean ? '' : 'row-alert'}>
+                    <tr key={`${log.timestamp}-${log.original_name}-${i}`} className={isClean ? '' : 'row-alert'}>
                       <td>{(log.timestamp || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td>{log.direction || '-'}</td>
+                      <td style={{ minWidth: 220 }}>{getParticipantText(log)}</td>
                       <td className="cell-filename">{log.original_name || '-'}</td>
                       <td>{typeof log.stego_probability === 'number' ? `${log.stego_probability.toFixed(1)}%` : '-'}</td>
                       <td>
