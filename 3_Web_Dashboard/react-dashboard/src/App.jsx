@@ -7,6 +7,7 @@ import DailyStatsPage from './pages/DailyStatsPage';
 import FileTypeReportPage from './pages/FileTypeReportPage';
 import ThresholdSettingsPage from './pages/ThresholdSettingsPage';
 import QuarantinePage from './pages/QuarantinePage';
+import CdrVerifyPage from './pages/CdrVerifyPage';
 import { useAuditLog } from './hooks/useAuditLog';
 import './App.css';
 
@@ -19,9 +20,11 @@ export default function App() {
       <Navbar online={online} usingMock={usingMock} onRefresh={refresh} />
       <div className="app-body">
         <Sidebar activePage={page} onNavigate={setPage} />
+
         <main className="main-content">
           {page === 'dashboard' && <DashboardPage audit={audit} />}
           {page === 'audit' && <AuditLogPage logs={audit.logs} />}
+          {page === 'cdr' && <CdrVerifyPage />}
           {page === 'daily-stats' && <DailyStatsPage audit={audit} />}
           {page === 'file-type' && <FileTypeReportPage audit={audit} />}
           {page === 'threshold' && <ThresholdSettingsPage />}
