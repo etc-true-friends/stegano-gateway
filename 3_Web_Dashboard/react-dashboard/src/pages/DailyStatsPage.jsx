@@ -10,7 +10,7 @@ export default function DailyStatsPage({ audit }) {
 
   return (
     <div className="page-content" style={{ maxWidth: '100%' }}>
-      <PanelCard title="기간 필터">
+      <PanelCard title="파일 기준 날짜 검색">
         <DateRangeFilter
           startDate={startDate} setStartDate={setStartDate}
           endDate={endDate} setEndDate={setEndDate}
@@ -24,9 +24,12 @@ export default function DailyStatsPage({ audit }) {
         </PanelCard>
       </div>
 
-      <div style={{ marginTop: 16 }}>
-        <PanelCard title="일별 탐지 통계">
-          <DailyTrendChart logs={filteredLogs} />
+      <div className="daily-stats-grid" style={{ marginTop: 16 }}>
+        <PanelCard title="일별 판정 분포">
+          <DailyTrendChart logs={filteredLogs} mode="verdict" />
+        </PanelCard>
+        <PanelCard title="일별 처리 분포">
+          <DailyTrendChart logs={filteredLogs} mode="action" />
         </PanelCard>
       </div>
     </div>

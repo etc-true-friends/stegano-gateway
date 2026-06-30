@@ -484,8 +484,145 @@ async def get_gateway_statistics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"지표 산출 실패: {str(e)}")
 
+def _extract_file_id_from_stored_path(stored_path: str | None) -> str | None:
+    if not stored_path:
+        return None
+
+    filename = os.path.basename(stored_path.replace("\\", "/"))
+    if "_" not in filename:
+        return None
+
+    prefix = filename.split("_", 1)[0].strip()
+    return prefix or None
+
+
+def _fetch_mail_attachment_meta() -> tuple[dict[str, dict], list[dict]]:
+    if not os.path.exists(MAIL_DB_PATH):
+        return {}, []
+
+    conn = sqlite3.connect(MAIL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            a.id AS attachment_id,
+            a.mail_id,
+            a.original_file_name,
+            a.stored_path,
+            a.file_size,
+            a.mime_type,
+            a.created_at AS attachment_created_at,
+            m.sender_id,
+            m.parent_mail_id,
+            m.subject,
+            m.body,
+            m.status AS mail_status,
+            m.sent_at AS mail_sent_at,
+            m.created_at AS mail_created_at,
+            mb.type AS mailbox_type,
+            owner.email AS mailbox_owner_email,
+            owner.username AS mailbox_owner_name,
+            sender.email AS sender_email,
+            sender.username AS sender_name
+        FROM mail_attachment a
+        JOIN mail m ON m.id = a.mail_id
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        LEFT JOIN employee owner ON owner.id = mb.employee_id
+        LEFT JOIN employee sender ON sender.id = m.sender_id
+        WHERE COALESCE(m.b_deleted, 'N') = 'N'
+        ORDER BY COALESCE(a.created_at, m.sent_at, m.created_at) DESC, a.id DESC
+    """)
+    rows = [dict(row) for row in cursor.fetchall()]
+
+    cursor.execute("""
+        SELECT
+            m.sender_id,
+            m.parent_mail_id,
+            m.subject,
+            m.body,
+            m.sent_at AS mail_sent_at,
+            owner.email AS recipient_email
+        FROM mail m
+        JOIN mailbox mb ON mb.id = m.mailbox_id
+        LEFT JOIN employee owner ON owner.id = mb.employee_id
+        WHERE COALESCE(m.b_deleted, 'N') = 'N'
+          AND UPPER(COALESCE(mb.type, '')) = 'INBOX'
+    """)
+    inbox_rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    inbox_recipients = {}
+    for row in inbox_rows:
+        key = (
+            row.get("sender_id"),
+            row.get("parent_mail_id"),
+            row.get("subject"),
+            row.get("body"),
+            row.get("mail_sent_at"),
+        )
+        inbox_recipients[key] = row.get("mailbox_owner_email")
+
+    by_file_id: dict[str, dict] = {}
+    synthetic_logs: list[dict] = []
+    seen_file_ids = set()
+
+    for row in rows:
+        file_id = _extract_file_id_from_stored_path(row.get("stored_path"))
+        key = (
+            row.get("sender_id"),
+            row.get("parent_mail_id"),
+            row.get("subject"),
+            row.get("body"),
+            row.get("mail_sent_at"),
+        )
+        mailbox_type = str(row.get("mailbox_type") or "").upper()
+        recipient_email = row.get("mailbox_owner_email") if mailbox_type == "INBOX" else inbox_recipients.get(key)
+        if not recipient_email and mailbox_type == "SENT":
+            recipient_email = row.get("mailbox_owner_email")
+
+        meta = {
+            "file_id": file_id,
+            "mail_id": row.get("mail_id"),
+            "attachment_id": row.get("attachment_id"),
+            "mail_subject": row.get("subject"),
+            "mail_status": row.get("mail_status"),
+            "mailbox_type": mailbox_type,
+            "mail_sent_at": row.get("mail_sent_at"),
+            "mail_created_at": row.get("mail_created_at"),
+            "attachment_created_at": row.get("attachment_created_at"),
+            "attachment_file_size": row.get("file_size"),
+            "attachment_mime_type": row.get("mime_type"),
+            "stored_path": row.get("stored_path"),
+            "sender_email": row.get("sender_email"),
+            "recipient_email": recipient_email,
+        }
+
+        if file_id and (file_id not in by_file_id or mailbox_type == "SENT"):
+            by_file_id[file_id] = meta
+
+        if file_id in seen_file_ids:
+            continue
+        seen_file_ids.add(file_id)
+
+        synthetic_logs.append({
+            "timestamp": row.get("attachment_created_at") or row.get("mail_sent_at") or row.get("mail_created_at"),
+            "direction": "OUTBOUND" if mailbox_type == "SENT" else "INBOUND",
+            "original_name": row.get("original_file_name"),
+            "stego_probability": None,
+            "risk_level": "UNKNOWN",
+            "verdict": "UNSCANNED",
+            "action": "MAIL_ATTACHMENT",
+            **meta,
+            "source": "mail",
+        })
+
+    return by_file_id, synthetic_logs
+
+
 @app.get("/audit")
 def get_audit():
+    mail_meta_by_file_id, mail_attachment_logs = _fetch_mail_attachment_meta()
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -502,16 +639,46 @@ def get_audit():
             sender_email,
             recipient_email
         FROM audit_logs
+        ORDER BY timestamp ASC
     """)
     rows = cursor.fetchall()
     conn.close()
 
-    logs = [dict(row) for row in rows]
+    logs = []
+    audit_file_ids = set()
+    for row in rows:
+        log = dict(row)
+        file_id = log.get("file_id")
+        if file_id:
+            audit_file_ids.add(file_id)
+            meta = mail_meta_by_file_id.get(file_id)
+            if not meta:
+                meta = next(
+                    (value for key, value in mail_meta_by_file_id.items() if file_id.startswith(f"{key}_")),
+                    None,
+                )
+            if meta:
+                log.update({k: v for k, v in meta.items() if v is not None})
+                log["source"] = "audit_mail"
+            else:
+                log["source"] = "audit"
+        else:
+            log["source"] = "audit"
+        logs.append(log)
+
+    for mail_log in mail_attachment_logs:
+        file_id = mail_log.get("file_id")
+        if file_id and file_id in audit_file_ids:
+            continue
+        logs.append(mail_log)
+
+    logs.sort(key=lambda log: log.get("timestamp") or log.get("mail_sent_at") or "")
     suspicious_count = sum(1 for log in logs if log["verdict"] == "SUSPICIOUS")
     
     return {
         "total_count": len(logs),
         "suspicious_count": suspicious_count,
+        "mail_attachment_count": len(mail_attachment_logs),
         "logs": logs
     }
 # ─────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { getEventDate } from '../utils/detectionStats';
 
 function toDateInputValue(date) {
   return date.toISOString().slice(0, 10);
@@ -18,7 +19,7 @@ export function useDateRangeFilter(logs, defaultRangeLabel = '최근 7일') {
 
   const [startDate, setStartDateRaw] = useState(defaultStart ? toDateInputValue(defaultStart) : '');
   const [endDate, setEndDateRaw] = useState(defaultStart ? toDateInputValue(defaultEnd) : '');
-  const [activeRange, setActiveRange] = useState(defaultRangeLabel);
+  const [activeRange, setActiveRange] = useState(defaultRange.label);
 
   const setStartDate = (value) => { setStartDateRaw(value); setActiveRange(''); };
   const setEndDate = (value) => { setEndDateRaw(value); setActiveRange(''); };
@@ -38,7 +39,7 @@ export function useDateRangeFilter(logs, defaultRangeLabel = '최근 7일') {
 
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
-      const logDate = (log.timestamp || '').slice(0, 10);
+      const logDate = getEventDate(log);
       if (!logDate) return false;
       if (startDate && logDate < startDate) return false;
       if (endDate && logDate > endDate) return false;

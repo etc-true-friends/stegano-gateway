@@ -194,6 +194,19 @@ body {
 .risk-badge.risk-high   { color: #dc2626; background: #fef2f2; }
 .risk-badge.risk-medium { color: #d97706; background: #fffbeb; }
 .risk-badge.risk-low    { color: #059669; background: #f0fdf4; }
+.risk-badge.risk-unknown { color: #64748b; background: #f1f5f9; }
+
+.daily-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .daily-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ── 빈 상태 ── */
 .empty-state { text-align: center; padding: 36px; font-size: 12px; color: #94a3b8; font-weight: 500; }
