@@ -3,7 +3,8 @@
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+# 네트워크 변동(ECONNRESET 등)에 대비해 재시도·타임아웃을 넉넉히 둔다.
+RUN npm install --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000
 
 COPY . .
 RUN npm run build
