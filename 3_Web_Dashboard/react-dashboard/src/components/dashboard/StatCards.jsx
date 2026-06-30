@@ -1,10 +1,11 @@
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
-import { isCdrLog, isSuspiciousLog } from '../../utils/auditLabels';
+import { isCdrLog, isPolicyBlockedLog, isSuspiciousLog } from '../../utils/auditLabels';
 
 const CARDS = [
   { key: 'total', label: '총 스캔 수', dataKey: 'total', color: '#1e2a4a' },
-  { key: 'suspicious', label: '스테가노 탐지', dataKey: 'suspicious', color: '#1e2a4a' },
+  { key: 'suspicious', label: '위험 탐지', dataKey: 'suspicious', color: '#1e2a4a' },
   { key: 'cdr', label: 'CDR 무해화', dataKey: 'cdr', color: '#1e2a4a' },
+  { key: 'policy', label: '정책 차단/대체', dataKey: 'policy', color: '#8a3ffc' },
   { key: 'rate', label: '평균 위험도', dataKey: 'rate', color: '#dc2626' },
 ];
 
@@ -13,10 +14,13 @@ function buildSparkData(logs) {
   logs.forEach(log => {
     const date = (log.timestamp || '').slice(0, 10);
     if (!date) return;
-    if (!grouped[date]) grouped[date] = { date, total: 0, suspicious: 0, cdr: 0, rateSum: 0 };
+    if (!grouped[date]) {
+      grouped[date] = { date, total: 0, suspicious: 0, cdr: 0, policy: 0, rateSum: 0 };
+    }
     grouped[date].total += 1;
     if (isSuspiciousLog(log)) grouped[date].suspicious += 1;
     if (isCdrLog(log)) grouped[date].cdr += 1;
+    if (isPolicyBlockedLog(log)) grouped[date].policy += 1;
     grouped[date].rateSum += (log.stego_probability || 0);
   });
 
@@ -30,12 +34,13 @@ function buildSparkData(logs) {
 
 export default function StatCards({ total, suspicious, logs = [] }) {
   const cdr = logs.filter(isCdrLog).length;
+  const policy = logs.filter(isPolicyBlockedLog).length;
   const avgRisk = logs.length > 0
     ? `${(logs.reduce((sum, l) => sum + (l.stego_probability || 0), 0) / logs.length).toFixed(1)}%`
     : '0.0%';
 
   const sparkData = buildSparkData(logs);
-  const values = { total, suspicious, cdr, rate: avgRisk };
+  const values = { total, suspicious, cdr, policy, rate: avgRisk };
 
   return (
     <div className="stat-grid">

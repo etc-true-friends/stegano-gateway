@@ -7,7 +7,12 @@ for %%I in ("%AI_DIR%..") do set "ROOT=%%~fI"
 set "PY=%ROOT%\.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=%ROOT%\venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
-set "WS=%ROOT%\4_Local_Workspace"
+
+rem Do not write %ROOT%\4_Local_Workspace directly here.
+rem Some editors/scripts can corrupt \4 or \t into control characters.
+set "WORKSPACE_NAME=4_Local_Workspace"
+set "WS=%ROOT%\%WORKSPACE_NAME%"
+
 cd /d "%AI_DIR%"
 
 :main
@@ -15,6 +20,7 @@ cls
 echo AI Engine Menu
 echo Root: %ROOT%
 echo Python: %PY%
+echo Workspace: %WS%
 echo.
 echo 0. original
 echo 1. dct_mid
@@ -48,12 +54,14 @@ cls
 echo Selected: !LABEL!
 echo Dataset: !DATASET_DIR!
 echo Checkpoints: !CHECKPOINTS_DIR!
+echo Input mode: !INPUT_MODE!
+echo Best metric: !BEST_METRIC!
 echo.
 echo 1. new training
 echo 2. resume training
 echo 3. val batch test
 echo 4. single image test
-echo 5. export best model to 4_Local_Workspace\models
+echo 5. export best model to 1_AI_Engine\checkpoints
 echo 6. back
 echo.
 set "ACT="
@@ -82,13 +90,17 @@ goto main
 set "KEY="
 set "LABEL="
 set "CK="
+set "INPUT_MODE=rgb"
+set "BEST_METRIC=loss"
+set "DEFAULT_LR=0.001"
+set "DEFAULT_BATCH=16"
 if "%~1"=="0" set "KEY=dataset"&set "LABEL=original"&set "CK=checkpoints"
 if "%~1"=="1" set "KEY=dataset_dct_mid"&set "LABEL=dct_mid"&set "CK=checkpoints_dct_mid"
 if "%~1"=="2" set "KEY=dataset_dwt_haar"&set "LABEL=dwt_haar"&set "CK=checkpoints_dwt_haar"
 if "%~1"=="3" set "KEY=dataset_aes_random_lsb"&set "LABEL=aes_random_lsb"&set "CK=checkpoints_aes_random_lsb"
 if "%~1"=="4" set "KEY=dataset_channel_lsb"&set "LABEL=channel_lsb"&set "CK=checkpoints_channel_lsb"
 if "%~1"=="5" set "KEY=dataset_alpha_lsb"&set "LABEL=alpha_lsb"&set "CK=checkpoints_alpha_lsb"
-if "%~1"=="6" set "KEY=dataset_edge_adaptive_lsb"&set "LABEL=edge_adaptive_lsb"&set "CK=checkpoints_edge_adaptive_lsb"
+if "%~1"=="6" set "KEY=dataset_edge_adaptive_lsb"&set "LABEL=edge_adaptive_lsb"&set "CK=checkpoints_edge_adaptive_lsb"&set "INPUT_MODE=lsb"&set "BEST_METRIC=balanced"&set "DEFAULT_LR=0.00015"&set "DEFAULT_BATCH=32"
 if "%~1"=="7" set "KEY=dataset_texture_adaptive_lsb"&set "LABEL=texture_adaptive_lsb"&set "CK=checkpoints_texture_adaptive_lsb"
 if "%~1"=="8" set "KEY=dataset_watermark"&set "LABEL=watermark"&set "CK=checkpoints_watermark"
 if "%KEY%"=="" exit /b 1
@@ -111,11 +123,11 @@ set "EPOCHS="
 set /p "EPOCHS=Epochs Enter=30: "
 if "!EPOCHS!"=="" set "EPOCHS=30"
 set "BATCH="
-set /p "BATCH=Batch size Enter=16: "
-if "!BATCH!"=="" set "BATCH=16"
+set /p "BATCH=Batch size Enter=!DEFAULT_BATCH!: "
+if "!BATCH!"=="" set "BATCH=!DEFAULT_BATCH!"
 set "LR="
-set /p "LR=Learning rate Enter=0.001: "
-if "!LR!"=="" set "LR=0.001"
+set /p "LR=Learning rate Enter=!DEFAULT_LR!: "
+if "!LR!"=="" set "LR=!DEFAULT_LR!"
 exit /b 0
 
 :train_new
@@ -140,15 +152,21 @@ exit /b %errorlevel%
 :run_train
 set "SRNET_DATASET_DIR=!DATASET_DIR!"
 set "SRNET_CHECKPOINTS_DIR=!CHECKPOINTS_DIR!"
+set "SRNET_INPUT_MODE=!INPUT_MODE!"
+set "SRNET_BEST_METRIC=!BEST_METRIC!"
+if "!LABEL!"=="edge_adaptive_lsb" (set "SRNET_WEIGHT_DECAY=0.0005") else (set "SRNET_WEIGHT_DECAY=0.0002")
 echo [RUN] SRNET_DATASET_DIR=!SRNET_DATASET_DIR!
 echo [RUN] SRNET_CHECKPOINTS_DIR=!SRNET_CHECKPOINTS_DIR!
-"%PY%" train.py --cover_path "!DATASET_DIR!\train\cover" --stego_path "!DATASET_DIR!\train\stego" --valid_cover_path "!DATASET_DIR!\val\cover" --valid_stego_path "!DATASET_DIR!\val\stego" --checkpoints_dir "!CHECKPOINTS_DIR!" --batch_size !BATCH! --num_epochs !EPOCHS! --train_size !TRAIN_COUNT! --val_size !VAL_COUNT! --lr !LR!
+echo [RUN] SRNET_INPUT_MODE=!SRNET_INPUT_MODE!
+echo [RUN] SRNET_BEST_METRIC=!SRNET_BEST_METRIC!
+echo [RUN] SRNET_WEIGHT_DECAY=!SRNET_WEIGHT_DECAY!
+"%PY%" train.py --cover_path "!DATASET_DIR!\train\cover" --stego_path "!DATASET_DIR!\train\stego" --valid_cover_path "!DATASET_DIR!\val\cover" --valid_stego_path "!DATASET_DIR!\val\stego" --checkpoints_dir "!CHECKPOINTS_DIR!" --batch_size !BATCH! --num_epochs !EPOCHS! --train_size !TRAIN_COUNT! --val_size !VAL_COUNT! --lr !LR! --input_mode !INPUT_MODE! --best_metric !BEST_METRIC! --weight_decay !SRNET_WEIGHT_DECAY!
 exit /b %errorlevel%
 
 :batch_test
 set "MODEL=!CHECKPOINTS_DIR!\best_srnet_model.pt"
 if not exist "!MODEL!" echo Missing model: !MODEL!&exit /b 1
-"%PY%" batch_test.py --cover_glob "!DATASET_DIR!\val\cover\*.png" --stego_glob "!DATASET_DIR!\val\stego\*.png" --checkpoint_path "!MODEL!" --batch_size 40
+"%PY%" batch_test.py --cover_glob "!DATASET_DIR!\val\cover\*.png" --stego_glob "!DATASET_DIR!\val\stego\*.png" --checkpoint_path "!MODEL!" --batch_size 40 --input_mode !INPUT_MODE!
 exit /b %errorlevel%
 
 :single_test
@@ -157,19 +175,19 @@ if not exist "!MODEL!" echo Missing model: !MODEL!&exit /b 1
 set "IMG="
 set /p "IMG=Image path: "
 if "!IMG!"=="" exit /b 0
-"%PY%" inference_test.py --checkpoint_path "!MODEL!" --img_dir "" --images "!IMG!"
+"%PY%" inference_test.py --checkpoint_path "!MODEL!" --img_dir "" --images "!IMG!" --input_mode !INPUT_MODE!
 exit /b %errorlevel%
 
 :ensemble_predict
 set "IMG="
 set /p "IMG=Image path: "
 if "%IMG%"=="" exit /b 0
-"%PY%" ensemble_predict.py --image "%IMG%" --models_dir "%WS%\models"
+"%PY%" ensemble_predict.py --image "%IMG%" --models_dir "%AI_DIR%checkpoints"
 exit /b %errorlevel%
 
 :ensemble_batch
 set "DATASET="
 set /p "DATASET=Dataset folder Enter=dataset: "
 if "%DATASET%"=="" set "DATASET=dataset"
-"%PY%" ensemble_batch_test.py --cover_dir "%WS%\%DATASET%\val\cover" --stego_dir "%WS%\%DATASET%\val\stego" --models_dir "%WS%\models" --output_csv "%WS%\ensemble_reports\%DATASET%_ensemble_report.csv"
+"%PY%" ensemble_batch_test.py --cover_dir "%WS%\%DATASET%\val\cover" --stego_dir "%WS%\%DATASET%\val\stego" --models_dir "%AI_DIR%checkpoints" --output_csv "%WS%\ensemble_reports\%DATASET%_ensemble_report.csv"
 exit /b %errorlevel%

@@ -9,5 +9,5 @@ if not exist "%PY%" set "PY=python"
 set /p IMG=Image path: 
 if "%IMG%"=="" exit /b 0
 cd /d "%ROOT%\1_AI_Engine"
-"%PY%" ensemble_predict.py --image "%IMG%" --models_dir "%ROOT%\4_Local_Workspace\models"
+"%PY%" ensemble_predict.py --image "%IMG%" --models_dir "%ROOT%\1_AI_Engine\checkpoints"
 exit /b %errorlevel%

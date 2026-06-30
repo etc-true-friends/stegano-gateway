@@ -1,5 +1,6 @@
 services:
   api-gateway:
+    image: 537124976047.dkr.ecr.us-east-1.amazonaws.com/stegano-api:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,6 +14,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - S3_BUCKET=${S3_BUCKET}
+      - ALETHEIA_CMD=${ALETHEIA_CMD:-python /opt/aletheia/aletheia.py spa}
+      - ALETHEIA_TIMEOUT=${ALETHEIA_TIMEOUT:-8}
     logging:
       driver: awslogs
       options:

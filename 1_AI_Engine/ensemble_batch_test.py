@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from ensemble_predict import image_to_tensor, load_models, load_weights, predict_tensor
+from ensemble_predict import load_models, load_weights, predict_image
 
 EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".pgm"}
 
@@ -20,10 +20,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cover_dir", required=True)
     parser.add_argument("--stego_dir", required=True)
-    parser.add_argument("--models_dir", default="../4_Local_Workspace/models")
+    parser.add_argument("--models_dir", default="./checkpoints")
     parser.add_argument("--weights_json", default=None)
     parser.add_argument("--output_csv", default=None)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--input_mode", choices=["auto", "rgb", "lsb"], default="auto")
     args = parser.parse_args()
 
     cover_images = list_images(args.cover_dir)
@@ -35,7 +36,8 @@ def main():
         raise SystemExit("cover or stego images not found")
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    models = load_models(args.models_dir, device)
+    override_mode = None if args.input_mode == "auto" else args.input_mode
+    models = load_models(args.models_dir, device, override_mode)
     weights = load_weights(args.weights_json)
 
     rows = []
@@ -45,8 +47,7 @@ def main():
 
     targets = [(p, 0) for p in cover_images] + [(p, 1) for p in stego_images]
     for idx, (path, label) in enumerate(targets, start=1):
-        tensor = image_to_tensor(path, device)
-        result = predict_tensor(models, tensor, weights)
+        result = predict_image(models, path, device, weights)
         pred = 1 if result["result"] == "stego" else 0
         ok = int(pred == label)
         correct += ok
@@ -71,7 +72,7 @@ def main():
     for key, value in sorted(method_hits.items(), key=lambda x: x[1], reverse=True):
         print(f"  {key}: {value}")
 
-    if args.output_csv:
+    if args.output_csv and rows:
         out = Path(args.output_csv)
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", newline="", encoding="utf-8-sig") as f:
