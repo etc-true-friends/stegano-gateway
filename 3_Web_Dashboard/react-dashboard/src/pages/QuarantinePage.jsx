@@ -52,9 +52,7 @@ export default function QuarantinePage({ logs = [] }) {
         </div>
 
         <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.7, marginBottom: 14 }}>
-          이 화면은 실제로 원본이 격리되었거나 정책 대체가 적용된 첨부파일만 모아 보여줍니다.
-          이미지 탐지는 사용자에게 CDR 무해화본을 전달하고, 실행형 또는 위장 첨부파일은 원본을 격리한 뒤
-          안전 안내 파일로 대체합니다.
+          원본이 격리되었거나 정책 대체가 적용된 첨부파일만 모아 보여줍니다.
         </p>
 
         <div className="log-table-wrap" style={{ maxHeight: 'calc(100vh - 280px)' }}>

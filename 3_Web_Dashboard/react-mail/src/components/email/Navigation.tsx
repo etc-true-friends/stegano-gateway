@@ -179,13 +179,13 @@ export default function Navigation() {
             </MaterialIcon>
           </IconButton>
         </Tooltip>
-        <Tooltip title="로그아웃">
+        <Tooltip title={'로그아웃'}>
           <IconButton
             size="sm"
             variant="plain"
             color="neutral"
             onClick={handleLogout}
-            aria-label="로그아웃"
+            aria-label={'로그아웃'}
           >
             <MaterialIcon><LogoutRoundedIcon /></MaterialIcon>
           </IconButton>

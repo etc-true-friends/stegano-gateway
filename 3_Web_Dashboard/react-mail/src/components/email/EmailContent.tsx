@@ -49,14 +49,10 @@ export default function EmailContent({ email, onDeleted }: Props) {
 
   const handleConfirmDelete = async () => {
     if (!email) return;
-    setDeleting(true);
-    try {
-      const { id } = await deleteMail(email.id);
-      setDeleteOpen(false);
-      onDeleted?.(id);
-    } finally {
-      setDeleting(false);
-    }
+    if (!window.confirm('삭제하시겠습니까?')) return;
+
+    const { id } = await deleteMail(email.id);
+    onDeleted?.(id);
   };
 
   const handleDownload = async (attachment: Attachment) => {

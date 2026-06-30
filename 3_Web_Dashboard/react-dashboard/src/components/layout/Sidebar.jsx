@@ -1,4 +1,4 @@
-import { LayoutDashboard, Monitor, FileSearch, BarChart2, Shield, Server, ChevronRight } from 'lucide-react';
+import { BarChart2, ChevronRight, FileSearch, LayoutDashboard, Monitor, Server, Shield } from 'lucide-react';
 
 const MENU_GROUPS = [
   {
@@ -14,7 +14,7 @@ const MENU_GROUPS = [
     icon: FileSearch,
     items: [
       { label: '감사 로그', page: 'audit' },
-      { label: '탐지 이력', page: null },
+      { label: '탐지 이력', page: 'detection-history' },
       { label: '격리/대체 현황', page: 'quarantine' },
     ],
   },
@@ -47,6 +47,10 @@ const MENU_GROUPS = [
   },
 ];
 
+function getRoute(page) {
+  return page ? `#/${page}` : undefined;
+}
+
 export default function Sidebar({ activePage, onNavigate }) {
   return (
     <aside className="sidebar">
@@ -68,22 +72,35 @@ export default function Sidebar({ activePage, onNavigate }) {
               <Icon size={11} />
               {group.label}
             </div>
-            {group.items.map(item => (
-              <div
-                key={item.label}
-                className={`pipeline-step ${activePage === item.page ? 'active' : ''}`}
-                style={{
-                  cursor: item.page ? 'pointer' : 'default',
-                  paddingLeft: 8,
-                  opacity: item.page ? 1 : 0.5,
-                  fontWeight: item.page ? 600 : 400,
-                }}
-                onClick={() => item.page && onNavigate(item.page)}
-              >
-                <ChevronRight size={10} />
-                {item.label}
-              </div>
-            ))}
+            {group.items.map(item => {
+              const isActive = activePage === item.page;
+              return (
+                <a
+                  key={item.label}
+                  href={getRoute(item.page)}
+                  className={`pipeline-step ${isActive ? 'active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-disabled={!item.page}
+                  onClick={event => {
+                    if (!item.page) {
+                      event.preventDefault();
+                      return;
+                    }
+                    onNavigate(item.page);
+                  }}
+                  style={{
+                    cursor: item.page ? 'pointer' : 'default',
+                    paddingLeft: 8,
+                    opacity: item.page ? 1 : 0.5,
+                    fontWeight: isActive ? 700 : item.page ? 600 : 400,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <ChevronRight size={10} />
+                  {item.label}
+                </a>
+              );
+            })}
           </div>
         );
       })}
