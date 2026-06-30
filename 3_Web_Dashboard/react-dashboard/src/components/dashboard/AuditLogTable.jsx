@@ -1,4 +1,4 @@
-import { getActionLabel, getRiskLabel, getVerdictLabel } from '../../utils/auditLabels';
+import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../../utils/auditLabels';
 
 const RISK_DOT = { HIGH: '●', MEDIUM: '●', LOW: '●' };
 
@@ -26,6 +26,7 @@ export default function AuditLogTable({ logs }) {
           {rows.map((log, i) => {
             const verdict = log.verdict || '-';
             const isClean = verdict === 'CLEAN';
+            const isPolicy = isPolicyBlockedLog(log);
             return (
               <tr key={i} className={isClean ? '' : 'row-alert'}>
                 <td>{(log.timestamp || '').slice(0, 19).replace('T', ' ')}</td>
@@ -36,7 +37,7 @@ export default function AuditLogTable({ logs }) {
                     {getRiskLabel(log.risk_level)}
                   </span>
                 </td>
-                <td>{RISK_DOT[log.risk_level] || '○'} {getVerdictLabel(verdict)}</td>
+                <td>{RISK_DOT[log.risk_level] || '○'} {isPolicy ? '정책' : getVerdictLabel(verdict)}</td>
                 <td>{getActionLabel(log.action)}</td>
               </tr>
             );

@@ -21,11 +21,15 @@ class DatasetLoad(Dataset):
         size: int,
         transform: Tuple = None,
         image_size: int = 256,
+        input_mode: str = "rgb",
     ) -> None:
         self.cover = cover_path
         self.stego = stego_path
         self.transforms = transform
         self.image_size = image_size
+        self.input_mode = (input_mode or "rgb").strip().lower()
+        if self.input_mode not in {"rgb", "lsb"}:
+            raise ValueError(f"지원하지 않는 input_mode 입니다: {self.input_mode}")
 
         if not os.path.isdir(self.cover):
             raise FileNotFoundError(f"Cover 폴더를 찾을 수 없습니다: {self.cover}")
@@ -50,15 +54,24 @@ class DatasetLoad(Dataset):
     def __len__(self) -> int:
         return self.data_size
 
+    def _to_tensor(self, arr: np.ndarray) -> Tensor:
+        if self.input_mode == "lsb":
+            arr = (arr.astype(np.uint8) & 1).astype(np.float32)
+            return torch.from_numpy(arr).permute(2, 0, 1)
+        return torch.from_numpy(arr).permute(2, 0, 1).float() / 255.0
+
     def _read_image(self, path: str) -> Tensor:
         with Image.open(path) as img:
             img = img.convert("RGB")
             if img.size != (self.image_size, self.image_size):
-                img = img.resize((self.image_size, self.image_size), Image.Resampling.BILINEAR)
-            if self.transforms is not None:
+                resample = Image.Resampling.NEAREST if self.input_mode == "lsb" else Image.Resampling.BILINEAR
+                img = img.resize((self.image_size, self.image_size), resample)
+
+            if self.transforms is not None and self.input_mode == "rgb":
                 return self.transforms(img)
+
             arr = np.array(img)
-            return torch.from_numpy(arr).permute(2, 0, 1).float() / 255.0
+            return self._to_tensor(arr)
 
     def __getitem__(self, index: int) -> Tuple[Tensor, Tensor]:
         if self.data_size == 0:

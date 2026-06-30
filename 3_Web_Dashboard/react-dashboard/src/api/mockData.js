@@ -28,13 +28,28 @@ const FILE_NAMES = [
   'receipt_upload.jpg',
 ];
 
+const USERS = [
+  'admin@gmail.com',
+  'test@gmail.com',
+  'security@etc-friends.local',
+  'user@etc-friends.local',
+];
+
 function makeLog(minutesAgo) {
   const prob = parseFloat((Math.random() * 100).toFixed(1));
   const risk_level = prob >= 70 ? 'HIGH' : prob >= 40 ? 'MEDIUM' : 'LOW';
   const verdict = prob >= 50 ? 'SUSPICIOUS' : 'CLEAN';
+  const sender_email = USERS[randomBetween(0, USERS.length - 1)];
+  let recipient_email = USERS[randomBetween(0, USERS.length - 1)];
+  if (recipient_email === sender_email) {
+    recipient_email = USERS[(USERS.indexOf(sender_email) + 1) % USERS.length];
+  }
   return {
     timestamp: isoTimestamp(minutesAgo),
     original_name: FILE_NAMES[randomBetween(0, FILE_NAMES.length - 1)],
+    direction: Math.random() > 0.5 ? 'OUTBOUND' : 'INBOUND',
+    sender_email,
+    recipient_email,
     stego_probability: prob,
     risk_level,
     verdict,

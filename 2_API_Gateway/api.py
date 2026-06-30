@@ -19,6 +19,7 @@ import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import PurePosixPath
@@ -85,6 +86,21 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            direction TEXT,
+            original_name TEXT,
+            stego_probability REAL,
+            risk_level TEXT,
+            verdict TEXT,
+            action TEXT,
+            file_id TEXT,
+            sender_email TEXT,
+            recipient_email TEXT
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS cdr_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id TEXT,
@@ -95,7 +111,30 @@ def init_db():
             processed_at TEXT
         )
     """)
+    # 탐지 임계값(격리/의심 경계)을 영속 저장하는 단일 행 테이블. id=1로 고정해 한 줄만 유지.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS policy_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            high_threshold REAL NOT NULL,
+            medium_threshold REAL NOT NULL
+        )
+    """)
 
+    # 최초 1회만 기존 하드코딩 값(75.0/30.0)으로 시드. 이미 값이 있으면(OR IGNORE) 덮어쓰지 않음.
+    cursor.execute(
+        "INSERT OR IGNORE INTO policy_settings (id, high_threshold, medium_threshold) VALUES (1, 75.0, 30.0)"
+    )
+
+    cursor.execute("PRAGMA table_info(audit_logs)")
+    audit_columns = {row[1] for row in cursor.fetchall()}
+
+    for column_name, column_type in {
+        "file_id": "TEXT",
+        "sender_email": "TEXT",
+        "recipient_email": "TEXT",
+    }.items():
+        if column_name not in audit_columns:
+            cursor.execute(f"ALTER TABLE audit_logs ADD COLUMN {column_name} {column_type}")
     conn.commit()
     conn.close()
 
@@ -104,6 +143,26 @@ def init_db():
     auth.seed_default_employee()
 
 init_db()
+
+
+def get_detection_thresholds() -> tuple[float, float]:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT high_threshold, medium_threshold FROM policy_settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    return (row[0], row[1]) if row else (75.0, 30.0)
+
+
+def set_detection_thresholds(high_threshold: float, medium_threshold: float) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE policy_settings SET high_threshold = ?, medium_threshold = ? WHERE id = 1",
+        (high_threshold, medium_threshold),
+    )
+    conn.commit()
+    conn.close()
 
 app.include_router(auth.router)
 
@@ -188,6 +247,7 @@ ALETHEIA_SUSPICIOUS_KEYWORDS = (
     "positive",
     "embedding",
 )
+ALETHEIA_LOSSLESS_FORMATS = {"png", "bmp", "tiff", "tif"}
 
 
 def _resolve_aletheia_command():
@@ -205,11 +265,20 @@ def _resolve_aletheia_command():
     return None
 
 
-def _run_aletheia(image_path: str) -> dict:
+def _run_aletheia(image_path: str, image_format: str | None = None) -> dict:
     """
     Run Aletheia steganalysis when the CLI is available.
     The gateway must keep serving files even if Aletheia is missing or fails.
     """
+    normalized_format = (image_format or "").lower().replace("jpeg", "jpg")
+    if normalized_format and normalized_format not in ALETHEIA_LOSSLESS_FORMATS:
+        return {
+            "available": True,
+            "skipped": True,
+            "suspicious": False,
+            "reason": f"Aletheia SPA skipped for lossy image format: {normalized_format}",
+        }
+
     command = _resolve_aletheia_command()
     if not command:
         return {
@@ -231,9 +300,18 @@ def _run_aletheia(image_path: str) -> dict:
             if part
         ).strip()
         output_lower = output.lower()
-        suspicious = any(
-            keyword in output_lower
-            for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+        clean_markers = (
+            "no hidden data found",
+            "no stego",
+            "not detected",
+            "clean",
+        )
+        suspicious = (
+            not any(marker in output_lower for marker in clean_markers)
+            and any(
+                keyword in output_lower
+                for keyword in ALETHEIA_SUSPICIOUS_KEYWORDS
+            )
         )
 
         return {
@@ -301,22 +379,56 @@ def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
     }
 
 
-def _classify_scan(stego_prob_pct: float, aletheia_result: dict, ensemble_result: dict | None = None):
+def _classify_scan(
+    stego_prob_pct: float,
+    aletheia_result: dict,
+    ensemble_result: dict | None = None,
+    high_threshold: float = 75.0,
+    medium_threshold: float = 30.0,
+):
     aletheia_suspicious = bool(aletheia_result.get("suspicious"))
     ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
     ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
 
-    if ensemble_high or stego_prob_pct >= 75.0 or aletheia_suspicious:
+    if ensemble_high or stego_prob_pct >= high_threshold or aletheia_suspicious:
         return "HIGH", "SUSPICIOUS", "QUARANTINE"
-    if ensemble_suspicious or stego_prob_pct >= 30.0:
+    if ensemble_suspicious or stego_prob_pct >= medium_threshold:
         return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
     return "LOW", "CLEAN", "BYPASS"
 
 
 def _aletheia_header_value(aletheia_result: dict) -> str:
+    if aletheia_result.get("skipped"):
+        return "SKIPPED"
     if not aletheia_result.get("available"):
         return "UNAVAILABLE"
     return "SUSPICIOUS" if aletheia_result.get("suspicious") else "CLEAN"
+
+
+class ThresholdUpdateRequest(BaseModel):
+    high_threshold: float
+    medium_threshold: float
+
+
+# ─────────────────────────────────────────────────
+# 정책 관리: 탐지 임계값 설정
+# ─────────────────────────────────────────────────
+@app.get("/policy/threshold")
+def get_threshold():
+    high_threshold, medium_threshold = get_detection_thresholds()
+    return {"high_threshold": high_threshold, "medium_threshold": medium_threshold}
+
+
+@app.put("/policy/threshold")
+def update_threshold(payload: ThresholdUpdateRequest):
+    if not (0.0 <= payload.medium_threshold < payload.high_threshold <= 100.0):
+        raise HTTPException(
+            status_code=400,
+            detail="임계값은 0 <= medium_threshold < high_threshold <= 100 조건을 만족해야 합니다.",
+        )
+    set_detection_thresholds(payload.high_threshold, payload.medium_threshold)
+    return {"high_threshold": payload.high_threshold, "medium_threshold": payload.medium_threshold}
+
 
 @app.get("/")
 def read_root():
@@ -394,7 +506,20 @@ def get_audit():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT timestamp, direction, original_name, stego_probability, risk_level, verdict, action FROM audit_logs")
+    cursor.execute("""
+        SELECT
+            timestamp,
+            direction,
+            original_name,
+            stego_probability,
+            risk_level,
+            verdict,
+            action,
+            file_id,
+            sender_email,
+            recipient_email
+        FROM audit_logs
+    """)
     rows = cursor.fetchall()
     conn.close()
 
@@ -421,6 +546,113 @@ MAX_ARCHIVE_FILES = int(os.getenv("MAX_ARCHIVE_FILES", 200))
 MAX_ARCHIVE_IMAGES = int(os.getenv("MAX_ARCHIVE_IMAGES", 100))
 ALLOW_NON_IMAGE_IN_ARCHIVE = os.getenv("ALLOW_NON_IMAGE_IN_ARCHIVE", "false").lower() == "true"
 
+DANGEROUS_ATTACHMENT_EXTENSIONS = {
+    ".7z",
+    ".ace",
+    ".app",
+    ".bat",
+    ".chm",
+    ".cmd",
+    ".com",
+    ".cpl",
+    ".crt",
+    ".deb",
+    ".dll",
+    ".dmg",
+    ".exe",
+    ".gadget",
+    ".gzi",
+    ".hta",
+    ".img",
+    ".inf",
+    ".ins",
+    ".iso",
+    ".jar",
+    ".jnlp",
+    ".js",
+    ".jse",
+    ".lnk",
+    ".mde",
+    ".msc",
+    ".msi",
+    ".msp",
+    ".mst",
+    ".pif",
+    ".ps1",
+    ".ps1xml",
+    ".ps2",
+    ".ps2xml",
+    ".psc1",
+    ".psc2",
+    ".pub",
+    ".py",
+    ".pyc",
+    ".pyo",
+    ".pyw",
+    ".rar",
+    ".reg",
+    ".rpm",
+    ".scr",
+    ".sct",
+    ".sh",
+    ".svg",
+    ".swf",
+    ".tar",
+    ".vbe",
+    ".vbs",
+    ".xll",
+    ".wsf",
+    ".wsh",
+    ".xz",
+    ".z",
+}
+
+MACRO_DOCUMENT_EXTENSIONS = {
+    ".docm",
+    ".dotm",
+    ".potm",
+    ".ppam",
+    ".ppsm",
+    ".pptm",
+    ".sldm",
+    ".xlsb",
+    ".xlsm",
+    ".xltm",
+}
+
+DECOY_DOCUMENT_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".hwp",
+    ".hwpx",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+}
+
+SOCIAL_ENGINEERING_KEYWORDS = (
+    "resume",
+    "cv",
+    "invoice",
+    "contract",
+    "quotation",
+    "estimate",
+    "application",
+    "이력서",
+    "입사지원",
+    "견적",
+    "견적서",
+    "계약",
+    "계약서",
+    "청구서",
+    "개인정보",
+)
+
 
 def _safe_archive_member_name(name: str) -> str:
     """
@@ -446,6 +678,137 @@ def _safe_disk_name(name: str) -> str:
     )[:160]
 
 
+def _attachment_policy_findings(filename: str, content_type: str, contents: bytes) -> list[str]:
+    """Return policy findings for non-image attachment risk signals."""
+    safe_name = os.path.basename(filename or "attachment")
+    lower_name = safe_name.lower()
+    suffixes = [suffix.lower() for suffix in PurePosixPath(lower_name).suffixes]
+    findings = []
+
+    if suffixes and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        findings.append(f"dangerous_extension:{suffixes[-1]}")
+
+    if suffixes and suffixes[-1] in MACRO_DOCUMENT_EXTENSIONS:
+        findings.append(f"macro_document:{suffixes[-1]}")
+
+    if len(suffixes) >= 2 and suffixes[-1] in DANGEROUS_ATTACHMENT_EXTENSIONS:
+        if any(suffix in DECOY_DOCUMENT_EXTENSIONS for suffix in suffixes[:-1]):
+            findings.append("double_extension_decoy")
+
+    if any(keyword in lower_name for keyword in SOCIAL_ENGINEERING_KEYWORDS):
+        findings.append("social_engineering_filename")
+
+    declared_type = (content_type or "").lower()
+    if declared_type.startswith("image/") and imghdr.what(None, h=contents) is None:
+        findings.append("mime_extension_mismatch")
+
+    return findings
+
+
+def _requires_policy_sanitization(findings: list[str]) -> bool:
+    return any(
+        finding.startswith("dangerous_extension:")
+        or finding.startswith("macro_document:")
+        or finding == "double_extension_decoy"
+        or finding == "mime_extension_mismatch"
+        for finding in findings
+    )
+
+
+def _write_policy_sanitized_notice(file_id: str, original_name: str, findings: list[str]) -> str:
+    safe_name = _safe_disk_name(original_name) or "attachment"
+    safe_stem = os.path.splitext(safe_name)[0] or "attachment"
+    output_name = f"{file_id}_{safe_stem}_sanitized.txt"
+    output_path = os.path.join(SANITIZED_DIR, output_name)
+
+    notice = "\n".join([
+        "/etc/friends Attachment Sanitization Notice",
+        "",
+        "The original attachment was replaced by policy-based sanitization.",
+        "Reason(s):",
+        *[f"- {finding}" for finding in findings],
+        "",
+        "The gateway does not deliver executable or script-like attachments.",
+        "If this file is business-critical, contact the security administrator.",
+    ])
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(notice)
+
+    return output_path
+
+
+def _find_sanitized_attachment_path(file_id: str, original_filename: str) -> str | None:
+    safe_name = _safe_disk_name(original_filename)
+    safe_name_no_ext = os.path.splitext(safe_name)[0]
+    preferred = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
+    if os.path.exists(preferred):
+        return preferred
+
+    prefix = f"{file_id}_"
+    suffix_prefix = f"{file_id}_{safe_name_no_ext}_sanitized."
+    for filename in os.listdir(SANITIZED_DIR):
+        if filename.startswith(suffix_prefix) or (filename.startswith(prefix) and "_sanitized." in filename):
+            candidate = os.path.join(SANITIZED_DIR, filename)
+            if os.path.isfile(candidate):
+                return candidate
+
+    return None
+
+
+def _scan_policy_attachment_bytes(contents: bytes, display_name: str, content_type: str, direction: str, file_id: str, findings: list[str]):
+    """Sanitize risky non-image attachments by replacing them with a safe notice file."""
+    safe_name = _safe_disk_name(display_name) or "attachment"
+    input_filename = f"{file_id}_{safe_name}"
+    input_path = os.path.join(UPLOAD_DIR, input_filename)
+
+    with open(input_path, "wb") as f:
+        f.write(contents)
+
+    output_path = _write_policy_sanitized_notice(file_id, display_name, findings)
+
+    quarantine_path = os.path.join(QUARANTINE_DIR, input_filename)
+    shutil.move(input_path, quarantine_path)
+
+    try:
+        os.chmod(quarantine_path, 0o440)
+    except Exception:
+        pass
+
+    try:
+        if S3_BUCKET:
+            s3.upload_file(quarantine_path, S3_BUCKET, f"quarantine/{input_filename}")
+            s3.upload_file(output_path, S3_BUCKET, f"sanitized/{os.path.basename(output_path)}")
+    except Exception as e:
+        print(f"S3 Upload Failed: {e}")
+
+    _record_audit(
+        direction=direction,
+        original_name=display_name,
+        stego_prob_pct=100.0,
+        risk_level="HIGH",
+        verdict="SUSPICIOUS",
+        action="POLICY_SANITIZED",
+        file_id=file_id,
+    )
+
+    sanitized_download_name = f"{os.path.splitext(safe_name)[0]}_sanitized.txt"
+
+    return {
+        "original_name": display_name,
+        "download_name": sanitized_download_name,
+        "stego_probability": 100.0,
+        "risk_level": "HIGH",
+        "verdict": "SUSPICIOUS",
+        "action": "POLICY_SANITIZED",
+        "policy": {
+            "findings": findings,
+            "sanitized_replacement": True,
+        },
+        "sanitized_path": output_path,
+    }
+
+
 def _record_audit(
     direction: str,
     original_name: str,
@@ -453,6 +816,9 @@ def _record_audit(
     risk_level: str,
     verdict: str,
     action: str,
+    file_id: str | None = None,
+    sender_email: str | None = None,
+    recipient_email: str | None = None,
 ):
 
     """
@@ -465,8 +831,8 @@ def _record_audit(
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO audit_logs
-        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action, file_id, sender_email, recipient_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         timestamp_str,
         direction,
@@ -475,7 +841,31 @@ def _record_audit(
         risk_level,
         verdict,
         action,
+        file_id,
+        sender_email,
+        recipient_email,
     ))
+    conn.commit()
+    conn.close()
+
+
+def _attach_mail_participants_to_audit(file_ids: list[str], sender_email: str, recipient_email: str) -> None:
+    if not file_ids:
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    for file_id in file_ids:
+        cursor.execute("""
+            UPDATE audit_logs
+            SET sender_email = ?, recipient_email = ?
+            WHERE file_id = ? OR file_id LIKE ?
+        """, (
+            sender_email,
+            recipient_email,
+            file_id,
+            f"{file_id}_%",
+        ))
     conn.commit()
     conn.close()
 
@@ -523,11 +913,14 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
 
     ensemble_result = _predict_ensemble(img_tensor)
     stego_prob_pct = ensemble_result["stego_prob_pct"]
-    aletheia_result = _run_aletheia(input_path)
+    aletheia_result = _run_aletheia(input_path, img_format)
+    high_threshold, medium_threshold = get_detection_thresholds()
     risk_level, verdict, action = _classify_scan(
         stego_prob_pct,
         aletheia_result,
         ensemble_result,
+        high_threshold,
+        medium_threshold,
     )
 
     output_filename = f"{file_id}_{os.path.splitext(safe_name)[0]}_sanitized.jpg"
@@ -563,6 +956,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         risk_level=risk_level,
         verdict=verdict,
         action=action,
+        file_id=file_id,
     )
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -602,7 +996,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
 def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file_id: str):
     """
     ZIP 내부 이미지를 전부 검사하고,
-    CDR 처리된 이미지들만 모아서 sanitized ZIP으로 다시 반환한다.
+    CDR 처리된 이미지들만 모아서 sanitized ZIP으로 저장한다.
     """
     if len(contents) > MAX_ARCHIVE_SIZE:
         raise HTTPException(status_code=413, detail="Archive too large")
@@ -694,25 +1088,18 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         risk_level=overall_risk,
         verdict=overall_verdict,
         action=f"ARCHIVE_{overall_action}",
+        file_id=file_id,
     )
 
-    headers = {
-        "X-Gateway-Verdict": overall_verdict,
-        "X-Gateway-Risk-Level": overall_risk,
-        "X-Gateway-Stego-Prob": f"{max_prob:.1f}%",
-        "X-Gateway-File-ID": str(file_id),
-        "X-Gateway-Archive-Images": str(image_count),
-        "X-Gateway-Archive-Suspicious": str(suspicious_count),
-        "X-Gateway-Archive-Mode": "ZIP_IMAGE_CDR",
-        "Access-Control-Expose-Headers": "*",
+    return {
+        "sanitized_path": result_zip_path,
+        "download_name": result_zip_name,
+        "verdict": overall_verdict,
+        "risk_level": overall_risk,
+        "stego_probability": max_prob,
+        "image_count": image_count,
+        "suspicious_count": suspicious_count,
     }
-
-    return FileResponse(
-        path=result_zip_path,
-        filename=result_zip_name,
-        media_type="application/zip",
-        headers=headers,
-    )
 
 # ─────────────────────────────────────────────────
 # LSB 디코더
@@ -919,9 +1306,35 @@ async def scan_and_sanitize(
 ):
     file_id = str(uuid.uuid4())[:8]
     contents = await file.read()
-    # ZIP 압축파일이면 내부 이미지들을 개별 스캔 + CDR 후 sanitized zip 반환
+    # ZIP 압축파일이면 내부 이미지를 개별 스캔 + CDR 후 sanitized zip 메타데이터를 반환
     content_type = (file.content_type or "").lower()
     filename_lower = (file.filename or "").lower()
+    original_filename = file.filename or "stream"
+
+    policy_findings = _attachment_policy_findings(original_filename, content_type, contents)
+    if _requires_policy_sanitization(policy_findings):
+        result = _scan_policy_attachment_bytes(
+            contents=contents,
+            display_name=original_filename,
+            content_type=file.content_type or "application/octet-stream",
+            direction=direction,
+            file_id=file_id,
+            findings=policy_findings,
+        )
+        return {
+            "file_id": file_id,
+            "original_filename": result["download_name"],
+            "file_size": os.path.getsize(result["sanitized_path"]),
+            "mime_type": "text/plain",
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "model": "policy_engine",
+            "model_scores": [],
+            "aletheia": "SKIPPED",
+            "policy": result["policy"],
+            "sanitized_path": result["sanitized_path"],
+        }
 
     is_zip_payload = zipfile.is_zipfile(io.BytesIO(contents))
 
@@ -929,12 +1342,29 @@ async def scan_and_sanitize(
       if not is_zip_payload:
         raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
 
-      return _scan_archive_bytes(
+      result = _scan_archive_bytes(
         contents,
         file.filename or "archive.zip",
         direction,
         file_id
-    )
+      )
+      return {
+          "file_id": file_id,
+          "original_filename": result["download_name"],
+          "file_size": os.path.getsize(result["sanitized_path"]),
+          "mime_type": "application/zip",
+          "verdict": result["verdict"],
+          "risk_level": result["risk_level"],
+          "stego_probability": result["stego_probability"],
+          "model": "archive_cdr",
+          "model_scores": [],
+          "aletheia": "SKIPPED_ARCHIVE",
+          "archive": {
+              "image_count": result["image_count"],
+              "suspicious_count": result["suspicious_count"],
+          },
+          "sanitized_path": result["sanitized_path"],
+      }
     
     try:
         result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
@@ -1008,6 +1438,41 @@ async def send_mail(
     sender_value = sender.strip()
     recipient_value = recipient.strip()
 
+    saved_attachment_meta = []
+    if attachment_ids:
+        try:
+            ids = _json.loads(attachment_ids)
+            filenames = _json.loads(attachment_filenames) if attachment_filenames else []
+            mimetypes = _json.loads(attachment_mimetypes) if attachment_mimetypes else []
+            sizes = _json.loads(attachment_sizes) if attachment_sizes else []
+        except (_json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid attachment metadata")
+
+        if not isinstance(ids, list) or not all(isinstance(values, list) for values in (filenames, mimetypes, sizes)):
+            raise HTTPException(status_code=400, detail="Invalid attachment metadata")
+
+        for i, file_id in enumerate(ids):
+            if not isinstance(file_id, str) or not file_id.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment file_id")
+
+            original_filename = filenames[i] if i < len(filenames) else "unknown"
+            mime_type = mimetypes[i] if i < len(mimetypes) else "application/octet-stream"
+            file_size = sizes[i] if i < len(sizes) else 0
+
+            if not isinstance(original_filename, str) or not original_filename.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment filename")
+            if not isinstance(mime_type, str) or not mime_type.strip():
+                raise HTTPException(status_code=400, detail="Invalid attachment mimetype")
+            if not isinstance(file_size, int):
+                raise HTTPException(status_code=400, detail="Invalid attachment size")
+
+            saved_attachment_meta.append({
+                "file_id": file_id.strip(),
+                "original_filename": original_filename,
+                "mime_type": mime_type,
+                "file_size": file_size,
+            })
+
     conn = sqlite3.connect(MAIL_DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -1027,6 +1492,7 @@ async def send_mail(
         raise HTTPException(status_code=404, detail="발신자를 찾을 수 없습니다.")
 
     sender_id = sender_row["id"]
+    sender_email = sender_row["email"] or sender_value
 
     # 수신자 username 조회
     cursor.execute("""
@@ -1043,6 +1509,7 @@ async def send_mail(
         raise HTTPException(status_code=404, detail="수신자를 찾을 수 없습니다.")
 
     recipient_id = recipient_row["id"]
+    recipient_email = recipient_row["email"] or recipient_value
 
     # 발신자 SENT 메일함 조회, 없으면 생성
     cursor.execute(
@@ -1094,49 +1561,45 @@ async def send_mail(
 
     # 스캔 단계에서 저장된 파일을 file_id 기반으로 mail_attachment에 매핑
     saved_attachments = []
-    if attachment_ids:
-        ids = _json.loads(attachment_ids)
-        filenames = _json.loads(attachment_filenames) if attachment_filenames else []
-        mimetypes = _json.loads(attachment_mimetypes) if attachment_mimetypes else []
-        sizes = _json.loads(attachment_sizes) if attachment_sizes else []
+    for attachment in saved_attachment_meta:
+        file_id = attachment["file_id"]
+        original_filename = attachment["original_filename"]
+        mime_type = attachment["mime_type"]
+        file_size = attachment["file_size"]
 
-        for i, file_id in enumerate(ids):
-            original_filename = filenames[i] if i < len(filenames) else "unknown"
-            mime_type = mimetypes[i] if i < len(mimetypes) else "application/octet-stream"
-            file_size = sizes[i] if i < len(sizes) else 0
+        safe_name = _safe_disk_name(original_filename)
+        sanitized_path = _find_sanitized_attachment_path(file_id, original_filename)
+        stored_path = sanitized_path if sanitized_path else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
 
-            safe_name = _safe_disk_name(original_filename)
-            safe_name_no_ext = os.path.splitext(safe_name)[0]
-            sanitized_path = os.path.join(SANITIZED_DIR, f"{file_id}_{safe_name_no_ext}_sanitized.jpg")
-            stored_path = sanitized_path if os.path.exists(sanitized_path) else os.path.join(UPLOAD_DIR, f"{file_id}_{safe_name}")
+        # 발신자 SENT에 첨부파일 매핑
+        cursor.execute("""
+            INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
 
-            # 발신자 SENT에 첨부파일 매핑
+        # 수신자 INBOX에도 동일하게 첨부파일 매핑
+        if inbox_mail_id:
             cursor.execute("""
                 INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (mail_id, original_filename, stored_path, file_size, mime_type, now))
+            """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
 
-            # 수신자 INBOX에도 동일하게 첨부파일 매핑
-            if inbox_mail_id:
-                cursor.execute("""
-                    INSERT INTO mail_attachment (mail_id, original_file_name, stored_path, file_size, mime_type, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (inbox_mail_id, original_filename, stored_path, file_size, mime_type, now))
+        saved_attachments.append({
+            "file_id": file_id,
+            "original_file_name": original_filename,
+            "file_size": file_size,
+            "mime_type": mime_type,
+        })
 
-            saved_attachments.append({
-                "file_id": file_id,
-                "original_file_name": original_filename,
-                "file_size": file_size,
-                "mime_type": mime_type,
-            })
+        _attach_mail_participants_to_audit(ids, sender_email, recipient_email)
 
     conn.commit()
     conn.close()
 
     return {
         "id": mail_id,
-        "sender": sender_value,
-        "recipient": recipient_value,
+        "sender": sender_email,
+        "recipient": recipient_email,
         "sender_id": sender_id,
         "recipient_id": recipient_id,
         "mailbox_id": mailbox_id,

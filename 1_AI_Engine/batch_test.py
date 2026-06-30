@@ -1,5 +1,4 @@
 import argparse
-import os
 from glob import glob
 
 import numpy as np
@@ -15,16 +14,46 @@ def parse_args():
     parser.add_argument("--stego_glob", default="../4_Local_Workspace/dataset_finetune/train/stego/*.png")
     parser.add_argument("--checkpoint_path", default="../4_Local_Workspace/checkpoints/best_srnet_finetuned.pt")
     parser.add_argument("--batch_size", type=int, default=40)
+    parser.add_argument("--input_mode", choices=["auto", "rgb", "lsb"], default="auto")
     return parser.parse_args()
 
 
-def load_state_dict(checkpoint_path, device):
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+def load_checkpoint(checkpoint_path, device):
+    return torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+
+def resolve_input_mode(checkpoint, checkpoint_path, requested_mode):
+    if requested_mode != "auto":
+        return requested_mode
+    if isinstance(checkpoint, dict):
+        opt = checkpoint.get("opt")
+        mode = getattr(opt, "input_mode", None)
+        if isinstance(mode, str) and mode.strip():
+            return mode.strip().lower()
+    name = str(checkpoint_path).lower()
+    return "lsb" if "edge_adaptive_lsb" in name else "rgb"
+
+
+def load_state_dict(checkpoint):
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         return checkpoint["model_state_dict"]
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         return checkpoint["state_dict"]
     return checkpoint
+
+
+def preprocess_image(image_path, input_mode):
+    with Image.open(image_path) as pil_img:
+        pil_img = pil_img.convert("RGB")
+        if pil_img.size != (256, 256):
+            resample = Image.Resampling.NEAREST if input_mode == "lsb" else Image.Resampling.BILINEAR
+            pil_img = pil_img.resize((256, 256), resample)
+        img_array = np.array(pil_img)
+
+    if input_mode == "lsb":
+        arr = (img_array.astype(np.uint8) & 1).astype(np.float32)
+        return torch.from_numpy(arr).permute(2, 0, 1)
+    return torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
 
 
 def main():
@@ -46,9 +75,11 @@ def main():
     print(f"[*] Cover {len(cover_image_names)}장, Stego {len(stego_image_names)}장 로드 완료.")
 
     model = Srnet().to(device)
-    model.load_state_dict(load_state_dict(opt.checkpoint_path, device), strict=True)
+    checkpoint = load_checkpoint(opt.checkpoint_path, device)
+    input_mode = resolve_input_mode(checkpoint, opt.checkpoint_path, opt.input_mode)
+    model.load_state_dict(load_state_dict(checkpoint), strict=True)
     model.eval()
-    print("[+] 파인튜닝 통합 가중치 로드 완료.\n")
+    print(f"[+] 가중치 로드 완료. input_mode={input_mode}\n")
 
     test_accuracy = []
     half_batch = opt.batch_size // 2
@@ -69,16 +100,10 @@ def main():
                 batch.append(cover_path)
                 batch_labels.append(0)
 
-            images = torch.empty((len(batch), 3, 256, 256), dtype=torch.float)
+            images = torch.empty((len(batch), 3, 256, 256), dtype=torch.float32)
 
             for i, image_path in enumerate(batch):
-                with Image.open(image_path) as pil_img:
-                    pil_img = pil_img.convert("RGB")
-                    if pil_img.size != (256, 256):
-                        pil_img = pil_img.resize((256, 256), Image.Resampling.BILINEAR)
-                    img_array = np.array(pil_img)
-
-                images[i] = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
+                images[i] = preprocess_image(image_path, input_mode)
 
             image_tensor = images.to(device)
             batch_labels_tensor = torch.tensor(batch_labels, dtype=torch.long).to(device)
