@@ -5,8 +5,8 @@ const MENU_GROUPS = [
     label: '실시간 모니터링',
     icon: Monitor,
     items: [
-      { label: '위협 현황', page: null },
-      { label: 'CDR 처리 현황', page: null },
+      { label: '위험 현황', page: null },
+      { label: 'CDR 검증 현황', page: 'cdr'},
     ],
   },
   {

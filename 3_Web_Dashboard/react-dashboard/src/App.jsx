@@ -8,6 +8,7 @@ import DailyStatsPage from './pages/DailyStatsPage';
 import FileTypeReportPage from './pages/FileTypeReportPage';
 import ThresholdSettingsPage from './pages/ThresholdSettingsPage';
 import QuarantinePage from './pages/QuarantinePage';
+import CdrVerifyPage from './pages/CdrVerifyPage';
 import { useAuditLog } from './hooks/useAuditLog';
 import './App.css';
 
@@ -19,6 +20,7 @@ const ROUTES = {
   'file-type': FileTypeReportPage,
   threshold: ThresholdSettingsPage,
   quarantine: QuarantinePage,
+  cdr: CdrVerifyPage,
 };
 
 function getPageFromHash() {
@@ -46,9 +48,12 @@ export default function App() {
     }
   };
 
-  const pageProps = page === 'audit' || page === 'detection-history' || page === 'quarantine'
-    ? { logs: audit.logs }
-    : { audit };
+  const pageProps =
+    page === 'audit' || page === 'detection-history' || page === 'quarantine'
+      ? { logs: audit.logs }
+      : page === 'cdr' || page === 'threshold'
+        ? {}
+        : { audit };
 
   return (
     <div className="app-shell">

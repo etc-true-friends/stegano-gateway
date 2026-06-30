@@ -71,6 +71,20 @@ os.makedirs(QUARANTINE_DIR, exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            direction TEXT,
+            original_name TEXT,
+            stego_probability REAL,
+            risk_level TEXT,
+            verdict TEXT,
+            action TEXT
+        )
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,12 +119,15 @@ def init_db():
             medium_threshold REAL NOT NULL
         )
     """)
+
     # 최초 1회만 기존 하드코딩 값(75.0/30.0)으로 시드. 이미 값이 있으면(OR IGNORE) 덮어쓰지 않음.
     cursor.execute(
         "INSERT OR IGNORE INTO policy_settings (id, high_threshold, medium_threshold) VALUES (1, 75.0, 30.0)"
     )
+
     cursor.execute("PRAGMA table_info(audit_logs)")
     audit_columns = {row[1] for row in cursor.fetchall()}
+
     for column_name, column_type in {
         "file_id": "TEXT",
         "sender_email": "TEXT",
@@ -1307,8 +1324,148 @@ def _decode_lsb_message(image_path: str):
         return None
 
 # ─────────────────────────────────────────────────
-# 망연계 파일 통제 코어 파이프라인 라우터
+# DCT 디코더
+# DCT 중간주파수 계수의 부호를 읽어
+# NULL 문자까지 문자열 복원
+# DCT 스테가노 이미지 검증 용도
 # ─────────────────────────────────────────────────
+def _decode_dct_message(image_path: str):
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    MESSAGE_FREQ = (3, 2)
+
+    try:
+        img = Image.open(image_path).convert("RGB")
+        rgb = np.array(img)
+
+        ycrcb = cv2.cvtColor(rgb, cv2.COLOR_RGB2YCrCb).astype(np.float32)
+        y = ycrcb[:, :, 0]
+
+        h, w = y.shape
+        h8 = h - (h % 8)
+        w8 = w - (w % 8)
+
+        bits = []
+
+        for yy in range(0, h8, 8):
+            for xx in range(0, w8, 8):
+                block = y[yy:yy + 8, xx:xx + 8] - 128.0
+                dct = cv2.dct(block)
+
+                u, v = MESSAGE_FREQ
+                bits.append(1 if dct[u, v] >= 0 else 0)
+
+        chars = []
+
+        for i in range(0, len(bits), 8):
+            byte = bits[i:i + 8]
+
+            if len(byte) < 8:
+                break
+
+            ch = chr(int("".join(map(str, byte)), 2))
+
+            if ch == "\x00":
+                break
+
+            chars.append(ch)
+
+            if len(chars) >= 500:
+                break
+
+        message = "".join(chars).strip()
+
+        return message if message else None
+
+    except Exception:
+        return None
+
+# ─────────────────────────────────────────────────
+# DWT-Haar 디코더
+# 2x2 Haar HH 계수의 부호를 읽어
+# NULL 문자까지 문자열 복원
+# DWT 스테가노 이미지 검증 용도
+# ─────────────────────────────────────────────────
+def _decode_dwt_message(image_path: str):
+    from PIL import Image
+    import numpy as np
+    import string
+
+    try:
+        img = Image.open(image_path).convert("RGB")
+        rgb = np.array(img).astype(np.float32)
+
+        # 생성 코드에서 R,G,B 전체에 동일한 2x2 패턴을 넣기 때문에
+        # 복원은 R 채널만 읽어도 된다.
+        y = rgb[:, :, 0]
+
+        h, w = y.shape
+        h2 = h - (h % 2)
+        w2 = w - (w % 2)
+        y = y[:h2, :w2]
+
+        a = y[0::2, 0::2]
+        b = y[0::2, 1::2]
+        c = y[1::2, 0::2]
+        d = y[1::2, 1::2]
+
+        # Haar HH 계수
+        hh = (a - b - c + d) * 0.25
+
+        bits = []
+        for value in hh.reshape(-1):
+            bits.append(1 if value >= 0 else 0)
+
+        chars = []
+
+        for i in range(0, len(bits), 8):
+            byte = bits[i:i + 8]
+
+            if len(byte) < 8:
+                break
+
+            value = int("".join(map(str, byte)), 2)
+
+            if value == 0:
+                break
+
+            chars.append(chr(value))
+
+            if len(chars) >= 500:
+                break
+
+        message = "".join(chars).strip()
+
+        if not message:
+            return None
+
+        printable_count = sum(
+            1 for c in message
+            if c in string.printable and c not in "\x0b\x0c"
+        )
+
+        printable_ratio = printable_count / max(len(message), 1)
+
+        if printable_ratio < 0.85:
+            return None
+
+        clean_message = "".join(
+            c for c in message
+            if c in string.printable and c not in "\x0b\x0c"
+        ).strip()
+
+        if len(clean_message) < 3:
+            return None
+
+        return clean_message[:500]
+
+    except Exception as exc:
+        print(f"[DWT DECODE ERROR] {exc}")
+        return None
+
+    
 @app.post("/scan")
 async def scan_and_sanitize(
     file: UploadFile = File(...),
@@ -2133,15 +2290,18 @@ def _find_file_by_id(file_id: str, target: str = "original"):
 
     return None, None
 
+
 # ─────────────────────────────────────────────────
-# 스테가노그래피 디코딩
+# 스테가노그래피 디코딩 API
 # POST /decode
-# file_id 기반 원본 이미지에서 LSB 메시지 추출
+# file_id 기반 원본 이미지에서 은닉 메시지 추출
+# 파일명에 따라 LSB / DCT / DWT 디코더 자동 선택
 # ─────────────────────────────────────────────────
 @app.post("/decode")
 async def decode_stego_message(payload: dict):
     file_id = payload.get("file_id")
     target = payload.get("target", "original")
+    decoder_type = payload.get("decoder_type")
 
     if not file_id:
         raise HTTPException(status_code=400, detail="file_id is required")
@@ -2151,17 +2311,47 @@ async def decode_stego_message(payload: dict):
     if matched_path is None:
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
 
-    decoded_message = _decode_lsb_message(matched_path)
+    name_lower = matched_name.lower()
+
+    # decoder_type을 프론트에서 안 보내면 파일명으로 자동 판단
+    if decoder_type is None:
+        if "dct" in name_lower:
+            decoder_type = "DCT"
+        elif "dwt" in name_lower:
+            decoder_type = "DWT"
+        else:
+            decoder_type = "LSB"
+
+    decoder_type = decoder_type.upper()
+
+    # 디코더 선택
+    if decoder_type == "DCT":
+        decoded_message = _decode_dct_message(matched_path)
+    elif decoder_type == "DWT":
+        decoded_message = _decode_dwt_message(matched_path)
+    else:
+        decoded_message = _decode_lsb_message(matched_path)
+        decoder_type = "LSB"
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # 디코딩 결과를 CDR 검증 로그에 저장
+    cursor.execute("""
+        UPDATE cdr_logs
+        SET decoded_message = ?
+        WHERE file_id = ?
+    """, (decoded_message, file_id))
+
     cursor.execute("""
         SELECT file_name
         FROM cdr_logs
         WHERE file_id = ?
         LIMIT 1
     """, (file_id,))
+
     row = cursor.fetchone()
+
     conn.commit()
     conn.close()
 
@@ -2170,48 +2360,90 @@ async def decode_stego_message(payload: dict):
         "file_name": row[0] if row else matched_name,
         "decoded_message": decoded_message,
         "message_length": len(decoded_message) if decoded_message else 0,
-        "decoder_type": "LSB"
+        "decoder_type": decoder_type
     }
 
-# ─────────────────────────────────────────────────
-# CDR 재스캔 결과 저장
-# POST /cdr/rescan
-# 재스캔 후 은닉 확률을 CDR 검증 로그에 반영
-# ─────────────────────────────────────────────────
-@app.post("/cdr/rescan")
-async def update_rescan_result(payload: dict):
-    file_id = payload.get("file_id")
-    rescan_probability = payload.get("rescan_probability")
 
-    if not file_id:
-        raise HTTPException(status_code=400, detail="file_id is required")
+# ─────────────────────────────────────────────────
+# LSB 테스트 이미지 생성
+# POST /debug/make-lsb
+# HELLO CDR 메시지를 숨긴 PNG 생성
+# ─────────────────────────────────────────────────
+@app.post("/debug/make-lsb")
+async def make_lsb_test_image():
+    from PIL import Image
 
-    if rescan_probability is None:
-        raise HTTPException(status_code=400, detail="rescan_probability is required")
+    file_id = str(uuid.uuid4())[:8]
+    file_name = "lsb_test.png"
+    input_filename = f"{file_id}_{file_name}"
+    input_path = os.path.join(UPLOAD_DIR, input_filename)
+
+    img = Image.new("RGB", (200, 200), color=(120, 180, 220))
+    pixels = list(img.getdata())
+
+    message = "HELLO CDR" + "\x00"
+    bits = "".join(f"{ord(c):08b}" for c in message)
+
+    new_pixels = []
+    bit_idx = 0
+
+    for r, g, b in pixels:
+        channels = [r, g, b]
+
+        for i in range(3):
+            if bit_idx < len(bits):
+                channels[i] = (channels[i] & ~1) | int(bits[bit_idx])
+                bit_idx += 1
+
+        new_pixels.append(tuple(channels))
+
+    img.putdata(new_pixels)
+    img.save(input_path, "PNG")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE cdr_logs
-        SET rescan_probability = ?
-        WHERE file_id = ?
+        INSERT INTO cdr_logs
+        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
-        round(float(rescan_probability), 1),
-        file_id
+        file_id,
+        file_name,
+        99.9,
+        None,
+        None,
+        datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
     ))
-
-    if cursor.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="CDR 검증 로그를 찾을 수 없습니다.")
-
     conn.commit()
     conn.close()
 
     return {
         "file_id": file_id,
-        "rescan_probability": round(float(rescan_probability), 1)
+        "file_name": file_name,
+        "message": "HELLO CDR"
     }
 
+@app.get("/cdr/original/{file_id}")
+def get_original_image(file_id: str):
+    matched_path, matched_name = _find_file_by_id(file_id, "original")
+
+    if matched_path is None:
+        raise HTTPException(status_code=404, detail="원본 파일을 찾을 수 없습니다.")
+
+    name_lower = matched_name.lower()
+
+    if name_lower.endswith(".png"):
+        media_type = "image/png"
+    elif name_lower.endswith(".jpg") or name_lower.endswith(".jpeg"):
+        media_type = "image/jpeg"
+    else:
+        media_type = "application/octet-stream"
+
+    return FileResponse(
+        path=matched_path,
+        media_type=media_type,
+        filename=matched_name,
+    )
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)
 # ─────────────────────────────────────────────────
