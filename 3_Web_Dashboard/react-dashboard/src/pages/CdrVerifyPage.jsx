@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import PanelCard from '../components/common/PanelCard';
 
-const API_BASE = 'http://localhost:8000';
 const PAGE_SIZE = 20;
 
 function classify(prob) {
