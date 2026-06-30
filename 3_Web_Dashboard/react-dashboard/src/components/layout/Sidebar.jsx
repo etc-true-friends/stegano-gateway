@@ -15,6 +15,7 @@ const MENU_GROUPS = [
     items: [
       { label: '감사 로그', page: 'audit' },
       { label: '탐지 이력', page: 'detection-history' },
+      { label: '무해화 이력', page: 'sanitize-history' },
       { label: '격리/대체 현황', page: 'quarantine' },
     ],
   },
