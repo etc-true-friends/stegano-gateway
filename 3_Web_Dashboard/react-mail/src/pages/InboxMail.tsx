@@ -26,6 +26,7 @@ export default function InboxMail() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
+
   React.useEffect(() => {
     const load = async () => {
       const user = getStoredAuthUser();
@@ -39,7 +40,23 @@ export default function InboxMail() {
       }
     };
     load();
+  })
+
+  const loadInboxMails = React.useCallback(async () => {
+    const user = getStoredAuthUser();
+    const email = user?.email ?? 'admin@gmail.com';
+    try {
+      const data = await fetchInboxMails(email);
+      setEmails(data as Email[]);
+      setSelectedEmail(data[0] ?? null);
+    } catch {
+      // API failure: keep current rendered state.
+    }
   }, []);
+
+  React.useEffect(() => {
+    loadInboxMails();
+  }, [loadInboxMails]);
 
   const handleSelectEmail = (email: Email) => {
     const readEmail = { ...email, unread: false };
@@ -64,6 +81,7 @@ export default function InboxMail() {
       const next = current.filter((item) => item.id !== mailBoxId);
       setSelectedEmail(next[0] ?? null);
       return next;
+      // Server update failures are reflected on the next list reload.
     });
   };
 
@@ -80,6 +98,7 @@ export default function InboxMail() {
       <Box sx={{ display: 'flex', minHeight: '100dvh', background: '#f3f6f9' }}>
         <Navigation />
 
+        {/* Email list panel */}
         <Sheet
           sx={{
             width: { xs: '100%', md: 320 },
@@ -131,8 +150,9 @@ export default function InboxMail() {
           </Box>
         </Sheet>
 
+        {/* Email content panel */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} onDeleted={handleDeleted} />
+          <EmailContent email={selectedEmail} onDeleted={loadInboxMails} />
         </Box>
       </Box>
 
