@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import PanelCard from '../components/common/PanelCard';
+import { API_BASE } from '../api/gateway';
 
 const PAGE_SIZE = 20;
 
