@@ -135,6 +135,21 @@ def init_db():
     }.items():
         if column_name not in audit_columns:
             cursor.execute(f"ALTER TABLE audit_logs ADD COLUMN {column_name} {column_type}")
+
+    # 무해화 이력 화면에서 쓰는 CDR 처리 상세를 cdr_logs에 누적 저장한다.
+    cursor.execute("PRAGMA table_info(cdr_logs)")
+    cdr_columns = {row[1] for row in cursor.fetchall()}
+
+    for column_name, column_type in {
+        "risk_level": "TEXT",          # 원본 위험도(HIGH/MEDIUM/LOW)
+        "action": "TEXT",              # 처리 결과 액션(QUARANTINE/BYPASS 등)
+        "original_kb": "REAL",         # 원본 크기(KB)
+        "sanitized_kb": "REAL",        # 무해화 결과 크기(KB)
+        "avg_pixel_diff": "REAL",      # 평균 픽셀 변화량(정화 강도 지표)
+    }.items():
+        if column_name not in cdr_columns:
+            cursor.execute(f"ALTER TABLE cdr_logs ADD COLUMN {column_name} {column_type}")
+
     conn.commit()
     conn.close()
 
@@ -1037,6 +1052,26 @@ def _attach_mail_participants_to_audit(file_ids: list[str], sender_email: str, r
     conn.close()
 
 
+def _rescan_probability_from_path(image_path: str) -> float | None:
+    """
+    무해화 결과 이미지를 동일 앙상블로 다시 검사해 '재탐지 위험도'(%)를 구한다.
+    무해화 이력 화면의 before/after 비교에 쓰인다. 실패 시 None을 반환해
+    본래의 스캔 흐름을 깨뜨리지 않는다.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+
+        img = Image.open(image_path).convert("RGB").resize((256, 256))
+        img_array = np.array(img)
+        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
+        img_tensor = img_tensor.unsqueeze(0).to(device)
+        return round(_predict_ensemble(img_tensor)["stego_prob_pct"], 1)
+    except Exception as e:
+        print(f"Rescan failed: {e}")
+        return None
+
+
 def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_id: str):
     """
     이미지 파일 1개에 대해 기존 /scan과 같은 방식으로
@@ -1125,19 +1160,28 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         action=action,
         file_id=file_id,
     )
+    # 무해화 결과를 다시 검사해 정화 전/후 위험도(before/after)를 남긴다.
+    rescan_probability = _rescan_probability_from_path(output_path)
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO cdr_logs
-        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at,
+         risk_level, action, original_kb, sanitized_kb, avg_pixel_diff)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         file_id,
         display_name,
         round(stego_prob_pct, 1),
         None,
-        None,
-        datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+        rescan_probability,
+        datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+        risk_level,
+        action,
+        cdr_info.get("original_kb"),
+        cdr_info.get("sanitized_kb"),
+        cdr_info.get("avg_pixel_diff"),
     ))
     conn.commit()
     conn.close()
@@ -2258,7 +2302,12 @@ async def get_cdr_status():
             stego_probability,
             decoded_message,
             rescan_probability,
-            processed_at
+            processed_at,
+            risk_level,
+            action,
+            original_kb,
+            sanitized_kb,
+            avg_pixel_diff
         FROM cdr_logs
         ORDER BY processed_at DESC
     """)
@@ -2444,6 +2493,8 @@ def get_original_image(file_id: str):
         media_type=media_type,
         filename=matched_name,
     )
+
+
 # ─────────────────────────────────────────────────
 # 모의 망연계 포털 엔드포인트 (시연 최적화 UI 적용 및 이모지 제거)
 # ─────────────────────────────────────────────────

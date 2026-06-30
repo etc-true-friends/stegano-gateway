@@ -33,6 +33,11 @@ export async function updateDetectionThreshold(highThreshold, mediumThreshold) {
   return data;
 }
 
+export async function fetchCdrStatus() {
+  const { data } = await api.get('/cdr/status');
+  return data;
+}
+
 export async function scanFile(file) {
     const form = new FormData();
     form.append('file', file);
