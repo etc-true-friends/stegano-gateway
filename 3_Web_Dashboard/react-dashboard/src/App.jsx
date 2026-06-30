@@ -4,6 +4,7 @@ import Sidebar from './components/layout/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import AuditLogPage from './pages/AuditLogPage';
 import { useAuditLog } from './hooks/useAuditLog';
+import CdrVerifyPage from './pages/CdrVerifyPage';
 import './App.css';
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
         <main className="main-content">
           {page === 'dashboard' && <DashboardPage audit={audit} />}
           {page === 'audit' && <AuditLogPage logs={audit.logs} />}
+            {page === 'cdr' && <CdrVerifyPage />}
         </main>
       </div>
     </div>
