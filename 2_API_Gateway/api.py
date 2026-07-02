@@ -18,7 +18,7 @@ import shlex
 import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -29,6 +29,8 @@ import json
 import zipfile
 from urllib.parse import quote
 import string
+from collections import Counter
+
 
 # MSA 구조 경로 인식 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,6 +127,24 @@ def init_db():
         "INSERT OR IGNORE INTO policy_settings (id, high_threshold, medium_threshold) VALUES (1, 75.0, 30.0)"
     )
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_metrics (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            total_views INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO dashboard_metrics (id, total_views)
+        VALUES (1, 0)
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_active_visitors (
+            client_ip TEXT PRIMARY KEY,
+            last_seen REAL NOT NULL
+        )
+    """)
     cursor.execute("PRAGMA table_info(audit_logs)")
     audit_columns = {row[1] for row in cursor.fetchall()}
 
@@ -713,6 +733,441 @@ def get_audit():
         "mail_attachment_count": len(mail_attachment_logs),
         "logs": logs
     }
+
+def _get_extension(filename: str | None) -> str:
+    if not filename:
+        return "unknown"
+
+    name = filename.split("::")[-1].strip()
+    ext = os.path.splitext(name)[1].lower().replace(".", "")
+
+    return ext if ext else "unknown"
+
+
+def _normalize_action(action: str | None) -> str:
+    return str(action or "").upper()
+
+
+def _is_policy_blocked(log: dict) -> bool:
+    action = _normalize_action(log.get("action"))
+    return "POLICY" in action or action == "POLICY_SANITIZED"
+
+
+def _is_quarantined(log: dict) -> bool:
+    action = _normalize_action(log.get("action"))
+    return "QUARANTINE" in action or _is_policy_blocked(log)
+
+
+def _is_delivered(log: dict) -> bool:
+    action = _normalize_action(log.get("action"))
+    verdict = str(log.get("verdict") or "").upper()
+
+    if _is_quarantined(log):
+        return False
+
+    return (
+            "BYPASS" in action
+            or action == "MAIL_ATTACHMENT"
+            or verdict == "CLEAN"
+    )
+
+
+def _get_cdr_logs() -> list[dict]:
+    if not os.path.exists(DB_PATH):
+        return []
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            file_id,
+            file_name,
+            stego_probability,
+            decoded_message,
+            rescan_probability,
+            processed_at,
+            risk_level,
+            action,
+            original_kb,
+            sanitized_kb,
+            avg_pixel_diff
+        FROM cdr_logs
+        ORDER BY processed_at DESC
+    """)
+
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def _safe_rate(part: int | float, total: int | float) -> float:
+    if not total:
+        return 0.0
+    return round((part / total) * 100, 1)
+
+
+@app.get("/dashboard/threat-overview")
+def get_threat_overview():
+    audit_data = get_audit()
+    logs = audit_data.get("logs", [])
+    cdr_logs = _get_cdr_logs()
+
+    total_files = len(logs)
+    scanned_logs = [
+        log for log in logs
+        if str(log.get("verdict") or "").upper() not in ("UNSCANNED", "")
+    ]
+
+    scanned_count = len(scanned_logs)
+
+    suspicious_logs = [
+        log for log in logs
+        if str(log.get("verdict") or "").upper() == "SUSPICIOUS"
+    ]
+
+    clean_logs = [
+        log for log in logs
+        if str(log.get("verdict") or "").upper() == "CLEAN"
+    ]
+
+    unscanned_logs = [
+        log for log in logs
+        if str(log.get("verdict") or "").upper() == "UNSCANNED"
+    ]
+
+    quarantine_logs = [log for log in logs if _is_quarantined(log)]
+    policy_logs = [log for log in logs if _is_policy_blocked(log)]
+    delivered_logs = [log for log in logs if _is_delivered(log)]
+
+    risk_distribution = Counter(
+        str(log.get("risk_level") or "UNKNOWN").upper()
+        for log in logs
+    )
+
+    direction_distribution = Counter(
+        str(log.get("direction") or "UNKNOWN").upper()
+        for log in logs
+    )
+
+    action_distribution = Counter(
+        str(log.get("action") or "UNKNOWN").upper()
+        for log in logs
+    )
+
+    extension_distribution = Counter(
+        _get_extension(log.get("original_name"))
+        for log in logs
+    )
+
+    latest_logs = sorted(
+        logs,
+        key=lambda log: log.get("timestamp") or log.get("mail_sent_at") or "",
+        reverse=True
+    )[:10]
+
+    latest_cdr = sorted(
+        cdr_logs,
+        key=lambda log: log.get("processed_at") or "",
+        reverse=True
+    )[:8]
+
+    high_threshold, medium_threshold = get_detection_thresholds()
+
+    def latest_time(items, *fields):
+        latest = None
+
+        for item in items:
+            for field in fields:
+                value = item.get(field)
+                if not value:
+                    continue
+
+                if latest is None or value > latest:
+                    latest = value
+
+                break
+
+        return latest
+
+    now_iso = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+
+    last_scan_at = latest_time(
+        scanned_logs,
+        "timestamp",
+        "mail_sent_at",
+    )
+
+    last_cdr_at = latest_time(
+        cdr_logs,
+        "processed_at",
+    )
+
+    last_quarantine_at = latest_time(
+        quarantine_logs,
+        "timestamp",
+        "mail_sent_at",
+    )
+
+    last_policy_at = latest_time(
+        policy_logs,
+        "timestamp",
+        "mail_sent_at",
+    )
+
+    mail_logs = [
+        log for log in logs
+        if log.get("source") in ("mail", "audit_mail")
+           or log.get("mail_sent_at")
+           or log.get("mail_created_at")
+           or log.get("attachment_created_at")
+    ]
+
+    last_mail_at = latest_time(
+        mail_logs,
+        "mail_sent_at",
+        "attachment_created_at",
+        "mail_created_at",
+        "timestamp",
+    )
+
+    avg_before = None
+    avg_after = None
+    avg_reduction = None
+
+    valid_cdr = [
+        log for log in cdr_logs
+        if log.get("stego_probability") is not None
+           and log.get("rescan_probability") is not None
+    ]
+
+    if valid_cdr:
+        avg_before = round(
+            sum(float(log["stego_probability"]) for log in valid_cdr) / len(valid_cdr),
+            1
+        )
+        avg_after = round(
+            sum(float(log["rescan_probability"]) for log in valid_cdr) / len(valid_cdr),
+            1
+        )
+        avg_reduction = round(
+            sum(
+                max(
+                    0,
+                    1 - (
+                            float(log["rescan_probability"])
+                            / max(float(log["stego_probability"]), 0.1)
+                    )
+                )
+                for log in valid_cdr
+            ) / len(valid_cdr) * 100,
+            1
+        )
+
+    system_status = [
+        {
+            "name": "API Gateway",
+            "type": "SERVER",
+            "status": "RUNNING",
+            "detail": "FastAPI gateway online",
+            "last_activity_label": "Last Request",
+            "last_activity_at": now_iso,
+        },
+        {
+            "name": "AI Engine",
+            "type": "MES",
+            "status": "RUNNING" if ensemble_models else "DEGRADED",
+            "detail": f"{len(ensemble_models)} model(s) loaded",
+            "last_activity_label": "Last Scan",
+            "last_activity_at": last_scan_at,
+        },
+        {
+            "name": "CDR Module",
+            "type": "MES",
+            "status": "RUNNING" if os.path.exists(SANITIZED_DIR) else "DEGRADED",
+            "detail": "sanitized storage ready" if os.path.exists(SANITIZED_DIR) else "sanitized storage missing",
+            "last_activity_label": "Last CDR",
+            "last_activity_at": last_cdr_at,
+        },
+        {
+            "name": "Quarantine Storage",
+            "type": "WMS",
+            "status": "RUNNING" if os.path.exists(QUARANTINE_DIR) else "DEGRADED",
+            "detail": "quarantine storage ready" if os.path.exists(QUARANTINE_DIR) else "quarantine storage missing",
+            "last_activity_label": "Last Quarantine",
+            "last_activity_at": last_quarantine_at,
+        },
+        {
+            "name": "Policy Engine",
+            "type": "ERP",
+            "status": "RUNNING",
+            "detail": f"HIGH {high_threshold}% / MEDIUM {medium_threshold}%",
+            "last_activity_label": "Last Policy Hit",
+            "last_activity_at": last_policy_at,
+        },
+        {
+            "name": "Mail Gateway",
+            "type": "WMS",
+            "status": "RUNNING" if os.path.exists(MAIL_DB_PATH) else "DEGRADED",
+            "detail": "mail DB connected" if os.path.exists(MAIL_DB_PATH) else "mail DB missing",
+            "last_activity_label": "Last Mail",
+            "last_activity_at": last_mail_at,
+        },
+    ]
+
+    return {
+        "generated_at": now_iso,
+
+        "summary": {
+            "total_files": total_files,
+            "scanned_files": scanned_count,
+            "suspicious_files": len(suspicious_logs),
+            "clean_files": len(clean_logs),
+            "unscanned_files": len(unscanned_logs),
+            "cdr_processed": len(cdr_logs),
+            "quarantined": len(quarantine_logs),
+            "policy_blocked": len(policy_logs),
+            "delivered": len(delivered_logs),
+            "threat_rate": _safe_rate(len(suspicious_logs), scanned_count),
+            "delivery_rate": _safe_rate(len(delivered_logs), total_files),
+        },
+
+        "mes_process": {
+            "received": total_files,
+            "ai_scanned": scanned_count,
+            "judged": len(clean_logs) + len(suspicious_logs),
+            "cdr_processed": len(cdr_logs),
+            "quarantined": len(quarantine_logs),
+            "delivered": len(delivered_logs),
+        },
+
+        "wms_inventory": {
+            "inbound_files": direction_distribution.get("INBOUND", 0),
+            "outbound_files": direction_distribution.get("OUTBOUND", 0),
+            "quarantine_storage": len(quarantine_logs),
+            "sanitized_storage": len(cdr_logs),
+            "mail_unscanned": len(unscanned_logs),
+            "delivered_files": len(delivered_logs),
+        },
+
+        "erp_metrics": {
+            "threat_rate": _safe_rate(len(suspicious_logs), scanned_count),
+            "clean_rate": _safe_rate(len(clean_logs), scanned_count),
+            "quarantine_rate": _safe_rate(len(quarantine_logs), total_files),
+            "policy_violation_rate": _safe_rate(len(policy_logs), total_files),
+            "cdr_conversion_rate": _safe_rate(len(cdr_logs), max(len(suspicious_logs), 1)),
+            "avg_before_risk": avg_before,
+            "avg_after_risk": avg_after,
+            "avg_risk_reduction": avg_reduction,
+        },
+
+        "risk_distribution": dict(risk_distribution),
+        "direction_distribution": dict(direction_distribution),
+        "action_distribution": dict(action_distribution),
+        "extension_distribution": dict(extension_distribution),
+
+        "system_status": system_status,
+        "recent_events": latest_logs,
+        "recent_cdr": latest_cdr,
+    }
+
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    if request.client:
+        return request.client.host
+
+    return "unknown"
+
+
+def _get_dashboard_visit_stats(cursor) -> dict:
+    import time
+
+    now_ts = time.time()
+    active_cutoff = now_ts - 60
+
+    cursor.execute(
+        "DELETE FROM dashboard_active_visitors WHERE last_seen < ?",
+        (active_cutoff,)
+    )
+
+    cursor.execute("SELECT total_views FROM dashboard_metrics WHERE id = 1")
+    row = cursor.fetchone()
+    total_views = row[0] if row else 0
+
+    cursor.execute("SELECT COUNT(*) FROM dashboard_active_visitors")
+    current_visitors = cursor.fetchone()[0]
+
+    return {
+        "total_views": total_views,
+        "current_visitors": current_visitors,
+        "active_window_seconds": 60,
+    }
+
+
+@app.post("/dashboard/threat-overview/view")
+def record_threat_overview_view(request: Request):
+    import time
+
+    client_ip = _get_client_ip(request)
+    now_ts = time.time()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # 한 IP라도 새로고침/재조회할 때마다 무한 증가 가능
+    cursor.execute("""
+        UPDATE dashboard_metrics
+        SET total_views = total_views + 1
+        WHERE id = 1
+    """)
+
+    # 현재 방문자 수는 최근 60초 안에 살아있는 IP 기준
+    cursor.execute("""
+        INSERT INTO dashboard_active_visitors (client_ip, last_seen)
+        VALUES (?, ?)
+        ON CONFLICT(client_ip)
+        DO UPDATE SET last_seen = excluded.last_seen
+    """, (client_ip, now_ts))
+
+    stats = _get_dashboard_visit_stats(cursor)
+
+    conn.commit()
+    conn.close()
+
+    return stats
+
+
+@app.post("/dashboard/threat-overview/heartbeat")
+def heartbeat_threat_overview(request: Request):
+    import time
+
+    client_ip = _get_client_ip(request)
+    now_ts = time.time()
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # heartbeat는 조회수 증가 X
+    # 현재 방문자 유지용
+    cursor.execute("""
+        INSERT INTO dashboard_active_visitors (client_ip, last_seen)
+        VALUES (?, ?)
+        ON CONFLICT(client_ip)
+        DO UPDATE SET last_seen = excluded.last_seen
+    """, (client_ip, now_ts))
+
+    stats = _get_dashboard_visit_stats(cursor)
+
+    conn.commit()
+    conn.close()
+
+    return stats
+
 # ─────────────────────────────────────────────────
 # 압축파일 내부 이미지 스캔/무해화 설정
 # ─────────────────────────────────────────────────
