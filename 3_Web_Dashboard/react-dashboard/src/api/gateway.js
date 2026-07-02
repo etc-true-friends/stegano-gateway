@@ -56,3 +56,18 @@ export async function scanFile(file) {
         downloadUrl: URL.createObjectURL(response.data),
     };
 }
+
+export async function fetchThreatOverview() {
+    const { data } = await api.get('/dashboard/threat-overview');
+    return data;
+}
+
+export const recordThreatOverviewView = async () => {
+    const response = await api.post('/dashboard/threat-overview/view');
+    return response.data;
+};
+
+export const heartbeatThreatOverview = async () => {
+    const response = await api.post('/dashboard/threat-overview/heartbeat');
+    return response.data;
+};

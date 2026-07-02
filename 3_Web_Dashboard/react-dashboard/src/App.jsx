@@ -12,9 +12,11 @@ import CdrVerifyPage from './pages/CdrVerifyPage';
 import SanitizeHistoryPage from './pages/SanitizeHistoryPage';
 import { useAuditLog } from './hooks/useAuditLog';
 import './App.css';
+import ThreatOverviewPage from './pages/ThreatOverviewPage';
 
 const ROUTES = {
   dashboard: DashboardPage,
+  'threat-overview': ThreatOverviewPage,
   audit: AuditLogPage,
   'detection-history': DetectionHistoryPage,
   'daily-stats': DailyStatsPage,
@@ -51,11 +53,11 @@ export default function App() {
   };
 
   const pageProps =
-    page === 'audit' || page === 'detection-history' || page === 'quarantine'
-      ? { logs: audit.logs }
-      : page === 'cdr' || page === 'threshold' || page === 'sanitize-history'
-        ? {}
-        : { audit };
+      page === 'audit' || page === 'detection-history' || page === 'quarantine'
+          ? { logs: audit.logs }
+          : page === 'cdr' || page === 'threshold' || page === 'sanitize-history' || page === 'threat-overview'
+              ? {}
+              : { audit };
 
   return (
     <div className="app-shell">
