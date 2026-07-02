@@ -9,7 +9,7 @@
       "display_name": "LSB 전용 모델",
       "path": "../1_AI_Engine/checkpoints/lsb_model.pt",
       "group": "spatial",
-      "threshold": 0.80,
+      "threshold": 0.8,
       "enabled": true
     },
     {
@@ -21,11 +21,20 @@
       "enabled": true
     },
     {
+      "name": "edge_adaptive_lsb",
+      "display_name": "Edge-adaptive LSB model",
+      "path": "../1_AI_Engine/checkpoints/edge_adaptive_lsb_model.pt",
+      "group": "spatial",
+      "threshold": 0.5,
+      "input_mode": "lsb",
+      "enabled": true
+    },
+    {
       "name": "dct_mid",
       "display_name": "DCT 전용 모델",
       "path": "../1_AI_Engine/checkpoints/dct_model.pt",
       "group": "frequency",
-      "threshold": 0.80,
+      "threshold": 0.8,
       "enabled": true
     },
     {
@@ -33,7 +42,7 @@
       "display_name": "DWT 전용 모델",
       "path": "../1_AI_Engine/checkpoints/dwt_model.pt",
       "group": "frequency",
-      "threshold": 0.90,
+      "threshold": 0.9,
       "enabled": true
     },
     {
