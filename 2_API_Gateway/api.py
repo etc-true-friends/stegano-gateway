@@ -1052,26 +1052,6 @@ def _attach_mail_participants_to_audit(file_ids: list[str], sender_email: str, r
     conn.close()
 
 
-def _rescan_probability_from_path(image_path: str) -> float | None:
-    """
-    무해화 결과 이미지를 동일 앙상블로 다시 검사해 '재탐지 위험도'(%)를 구한다.
-    무해화 이력 화면의 before/after 비교에 쓰인다. 실패 시 None을 반환해
-    본래의 스캔 흐름을 깨뜨리지 않는다.
-    """
-    try:
-        from PIL import Image
-        import numpy as np
-
-        img = Image.open(image_path).convert("RGB").resize((256, 256))
-        img_array = np.array(img)
-        img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
-        img_tensor = img_tensor.unsqueeze(0).to(device)
-        return round(_predict_ensemble(img_tensor)["stego_prob_pct"], 1)
-    except Exception as e:
-        print(f"Rescan failed: {e}")
-        return None
-
-
 def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_id: str):
     """
     이미지 파일 1개에 대해 기존 /scan과 같은 방식으로
@@ -1160,22 +1140,18 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         action=action,
         file_id=file_id,
     )
-    # 무해화 결과를 다시 검사해 정화 전/후 위험도(before/after)를 남긴다.
-    rescan_probability = _rescan_probability_from_path(output_path)
-
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO cdr_logs
-        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at,
+        (file_id, file_name, stego_probability, decoded_message, processed_at,
          risk_level, action, original_kb, sanitized_kb, avg_pixel_diff)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         file_id,
         display_name,
         round(stego_prob_pct, 1),
         None,
-        rescan_probability,
         datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
         risk_level,
         action,
@@ -2301,7 +2277,6 @@ async def get_cdr_status():
             file_name,
             stego_probability,
             decoded_message,
-            rescan_probability,
             processed_at,
             risk_level,
             action,
@@ -2453,13 +2428,12 @@ async def make_lsb_test_image():
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO cdr_logs
-        (file_id, file_name, stego_probability, decoded_message, rescan_probability, processed_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (file_id, file_name, stego_probability, decoded_message, processed_at)
+        VALUES (?, ?, ?, ?, ?)
     """, (
         file_id,
         file_name,
         99.9,
-        None,
         None,
         datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
     ))
