@@ -414,12 +414,12 @@ export default function ThreatOverviewPage() {
                         </div>
 
                         <div className="kpi-grid">
-                            <SmallMetric label="위협률" value={percent(erp.threat_rate)} />
-                            <SmallMetric label="정상률" value={percent(erp.clean_rate)} />
-                            <SmallMetric label="격리율" value={percent(erp.quarantine_rate)} />
-                            <SmallMetric label="정책 위반율" value={percent(erp.policy_violation_rate)} />
-                            <SmallMetric label="CDR 전환율" value={percent(erp.cdr_conversion_rate)} />
-                            <SmallMetric label="평균 위험 감소" value={percent(erp.avg_risk_reduction)} />
+                            <SmallMetric label="위협률" value={percent(erp.threat_rate)}/>
+                            <SmallMetric label="정상률" value={percent(erp.clean_rate)}/>
+                            <SmallMetric label="격리율" value={percent(erp.quarantine_rate)}/>
+                            <SmallMetric label="정책 위반율" value={percent(erp.policy_violation_rate)}/>
+                            <SmallMetric label="CDR 전환율" value={percent(erp.cdr_conversion_rate)}/>
+                            <SmallMetric label="평균 위험 감소" value={percent(erp.avg_risk_reduction)}/>
                         </div>
 
                         <div className="risk-change">
@@ -437,10 +437,10 @@ export default function ThreatOverviewPage() {
                         </div>
 
                         <div className="bar-list">
-                            <BarRow label="HIGH" value={riskDistribution.HIGH} max={riskMax} tone="red" />
-                            <BarRow label="MEDIUM" value={riskDistribution.MEDIUM} max={riskMax} tone="orange" />
-                            <BarRow label="LOW" value={riskDistribution.LOW} max={riskMax} tone="green" />
-                            <BarRow label="UNKNOWN" value={riskDistribution.UNKNOWN} max={riskMax} tone="gray" />
+                            <BarRow label="HIGH" value={riskDistribution.HIGH} max={riskMax} tone="red"/>
+                            <BarRow label="MEDIUM" value={riskDistribution.MEDIUM} max={riskMax} tone="orange"/>
+                            <BarRow label="LOW" value={riskDistribution.LOW} max={riskMax} tone="green"/>
+                            <BarRow label="UNKNOWN" value={riskDistribution.UNKNOWN} max={riskMax} tone="gray"/>
                         </div>
                     </div>
 
@@ -451,9 +451,12 @@ export default function ThreatOverviewPage() {
                         </div>
 
                         <div className="bar-list">
-                            <BarRow label="INBOUND" value={directionDistribution.INBOUND} max={directionMax} tone="navy" />
-                            <BarRow label="OUTBOUND" value={directionDistribution.OUTBOUND} max={directionMax} tone="navy" />
-                            <BarRow label="UNKNOWN" value={directionDistribution.UNKNOWN} max={directionMax} tone="gray" />
+                            <BarRow label="INBOUND" value={directionDistribution.INBOUND} max={directionMax}
+                                    tone="navy"/>
+                            <BarRow label="OUTBOUND" value={directionDistribution.OUTBOUND} max={directionMax}
+                                    tone="navy"/>
+                            <BarRow label="UNKNOWN" value={directionDistribution.UNKNOWN} max={directionMax}
+                                    tone="gray"/>
                         </div>
                     </div>
 
@@ -463,12 +466,12 @@ export default function ThreatOverviewPage() {
                             <span>Action</span>
                         </div>
 
-                        <div className="bar-list">
+                        <div className="bar-list action-bar-list">
                             {Object.keys(actionDistribution).length === 0 ? (
                                 <div className="empty-text">처리 액션 데이터가 없습니다.</div>
                             ) : (
                                 Object.entries(actionDistribution).map(([label, value]) => (
-                                    <BarRow key={label} label={label} value={value} max={actionMax} tone="navy" />
+                                    <BarRow key={label} label={label} value={value} max={actionMax} tone="navy"/>
                                 ))
                             )}
                         </div>
@@ -485,12 +488,12 @@ export default function ThreatOverviewPage() {
                                 <div className="empty-text">파일 확장자 데이터가 없습니다.</div>
                             ) : (
                                 Object.entries(extensionDistribution).slice(0, 6).map(([label, value]) => (
-                                    <BarRow key={label} label={label.toUpperCase()} value={value} max={extensionMax} tone="orange" />
+                                    <BarRow key={label} label={label.toUpperCase()} value={value} max={extensionMax}
+                                            tone="orange"/>
                                 ))
                             )}
                         </div>
                     </div>
-
                     <div className="overview-card recent-card">
                         <div className="card-header">
                             <h3>최근 위험 이벤트</h3>
@@ -931,6 +934,10 @@ const styles = `
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.action-bar-list .bar-row {
+  grid-template-columns: 150px minmax(0, 1fr) 42px;
 }
 
 .bar-row {
