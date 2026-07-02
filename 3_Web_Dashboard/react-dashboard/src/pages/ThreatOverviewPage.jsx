@@ -937,7 +937,7 @@ const styles = `
 }
 
 .action-bar-list .bar-row {
-  grid-template-columns: 150px minmax(0, 1fr) 42px;
+  grid-template-columns: 220px minmax(0, 1fr) 42px;
 }
 
 .bar-row {
@@ -993,7 +993,7 @@ const styles = `
 }
 
 .event-table-wrap {
-  max-height: 660px;
+  max-height: 500px;
   overflow: auto;
   padding: 20px;
 }
