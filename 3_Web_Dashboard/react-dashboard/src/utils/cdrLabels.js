@@ -12,7 +12,7 @@ export function formatProb(prob) {
   return `${Number(prob).toFixed(1)}%`;
 }
 
-// 재탐지 위험도 색상 (낮을수록 안전)
+// 원본 AI 탐지율 색상
 export function probColor(prob) {
   const value = Number(prob);
   if (!Number.isFinite(value)) return '#64748b';

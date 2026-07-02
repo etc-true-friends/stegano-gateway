@@ -76,15 +76,13 @@ export const MOCK_SYS_INFO = {
 
 // 무해화 이력(CDR 처리) 더미 — API 실패 시 SanitizeHistoryPage가 사용
 function makeCdrLog(i) {
-  const before = parseFloat((Math.random() * 60 + 38).toFixed(1)); // 위험 판정만(38~98%)
-  const after = parseFloat((Math.random() * 1.5).toFixed(1));      // 무해화 후 0~1.5%
+  const before = parseFloat((Math.random() * 60 + 38).toFixed(1)); // 원본 AI 탐지율(38~98%)
   const originalKb = parseFloat((Math.random() * 800 + 120).toFixed(1));
   const sanitizedKb = parseFloat((originalKb * (Math.random() * 0.25 + 0.45)).toFixed(1));
   return {
     file_id: `mock${String(i).padStart(4, '0')}`,
     file_name: FILE_NAMES[randomBetween(0, FILE_NAMES.length - 1)],
     stego_probability: before,
-    rescan_probability: after,
     processed_at: isoTimestamp(i * 53 + randomBetween(0, 40)),
     risk_level: before >= 70 ? 'HIGH' : 'MEDIUM',
     action: 'QUARANTINE',

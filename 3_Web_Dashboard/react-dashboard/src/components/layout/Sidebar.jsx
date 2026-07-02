@@ -6,7 +6,7 @@ const MENU_GROUPS = [
     icon: Monitor,
     items: [
       { label: '위협 현황', page: 'threat-overview' },
-      { label: 'CDR 검증 현황', page: 'cdr'},
+      { label: 'CDR 무해화 현황', page: 'cdr' },
     ],
   },
   {
