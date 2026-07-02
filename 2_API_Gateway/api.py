@@ -245,6 +245,7 @@ def _load_ensemble_models():
             "display_name": item.get("display_name", item["name"]),
             "threshold": float(item.get("threshold", 0.5)),
             "group": item.get("group", ""),
+            "input_mode": item.get("input_mode", "rgb"),
             "path": model_path,
             "model": _load_srnet_model(model_path),
         })
@@ -283,6 +284,14 @@ ALETHEIA_SUSPICIOUS_KEYWORDS = (
     "embedding",
 )
 ALETHEIA_LOSSLESS_FORMATS = {"png", "bmp", "tiff", "tif"}
+MULTICROP_ENABLED = os.getenv("MULTICROP_ENABLED", "true").lower() not in {"0", "false", "no"}
+MULTICROP_MIN_SIDE = int(os.getenv("MULTICROP_MIN_SIDE", "512"))
+MULTICROP_CROP_SIZE = int(os.getenv("MULTICROP_CROP_SIZE", "256"))
+MULTICROP_STRIDE = int(os.getenv("MULTICROP_STRIDE", "192"))
+MULTICROP_MAX_CROPS = int(os.getenv("MULTICROP_MAX_CROPS", "32"))
+MULTICROP_TOP_K = int(os.getenv("MULTICROP_TOP_K", "3"))
+MULTICROP_HIT_RATIO_THRESHOLD = float(os.getenv("MULTICROP_HIT_RATIO_THRESHOLD", "0.22"))
+LOSSY_IMAGE_FORMATS = {"jpeg", "jpg", "webp"}
 
 
 def _resolve_aletheia_command():
@@ -369,6 +378,177 @@ def _run_aletheia(image_path: str, image_format: str | None = None) -> dict:
         }
 
 
+def _crop_boxes(width: int, height: int, crop_size: int, stride: int, max_crops: int):
+    if width <= crop_size and height <= crop_size:
+        return [(0, 0, width, height)]
+
+    xs = list(range(0, max(width - crop_size, 0) + 1, stride))
+    ys = list(range(0, max(height - crop_size, 0) + 1, stride))
+    if not xs or xs[-1] != max(width - crop_size, 0):
+        xs.append(max(width - crop_size, 0))
+    if not ys or ys[-1] != max(height - crop_size, 0):
+        ys.append(max(height - crop_size, 0))
+
+    boxes = [
+        (x, y, min(x + crop_size, width), min(y + crop_size, height))
+        for y in ys
+        for x in xs
+    ]
+    if max_crops > 0 and len(boxes) > max_crops:
+        import numpy as np
+        keep = np.linspace(0, len(boxes) - 1, max_crops, dtype=np.int64)
+        boxes = [boxes[int(i)] for i in keep]
+    return boxes
+
+
+def _image_to_model_tensor(img, input_mode: str):
+    from PIL import Image
+    import numpy as np
+
+    img = img.convert("RGB")
+    if img.size != (256, 256):
+        resample = Image.Resampling.NEAREST if input_mode == "lsb" else Image.Resampling.BILINEAR
+        img = img.resize((256, 256), resample)
+    arr = np.array(img, dtype=np.uint8)
+    if input_mode == "lsb":
+        arr = (arr & 1).astype(np.float32)
+    else:
+        arr = arr.astype(np.float32) / 255.0
+    return torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(device)
+
+
+def _aggregate_scores(values: list[float], mode: str = "topk_mean", top_k: int = MULTICROP_TOP_K) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values, reverse=True)
+    if mode == "max":
+        return ordered[0]
+    if mode == "mean":
+        return sum(ordered) / len(ordered)
+    selected = ordered[: max(1, min(top_k, len(ordered)))]
+    return sum(selected) / len(selected)
+
+
+def _multicrop_policy_for_format(image_format: str | None) -> str:
+    normalized = (image_format or "").lower().replace("jpg", "jpeg")
+    return "mean" if normalized in LOSSY_IMAGE_FORMATS else "balanced"
+
+
+def _is_multicrop_detected(row: dict, policy: str) -> bool:
+    threshold = row["threshold"]
+    if policy == "mean":
+        return row["crop_mean"] >= threshold
+    if policy == "balanced":
+        return row["crop_mean"] >= threshold or (
+            row["crop_topk"] >= threshold
+            and row["crop_hit_ratio"] >= MULTICROP_HIT_RATIO_THRESHOLD
+        )
+    return row["probability"] >= threshold
+
+
+def _predict_ensemble_image(img, image_format: str | None = None) -> dict:
+    if not ensemble_models:
+        return {
+            "stego_prob_pct": 0.0,
+            "route_model": "none",
+            "high_detected": False,
+            "suspicious_detected": False,
+            "model_scores": [],
+            "multicrop": {"enabled": False, "crop_count": 0},
+        }
+
+    suspicious_margin = float(
+        ensemble_config.get("decision", {}).get("suspicious_margin", 0.15)
+    )
+    width, height = img.size
+    use_multicrop = (
+        MULTICROP_ENABLED
+        and max(width, height) >= MULTICROP_MIN_SIDE
+    )
+    if use_multicrop:
+        boxes = _crop_boxes(width, height, MULTICROP_CROP_SIZE, MULTICROP_STRIDE, MULTICROP_MAX_CROPS)
+        if (0, 0, width, height) not in boxes:
+            boxes.append((0, 0, width, height))
+        decision_policy = _multicrop_policy_for_format(image_format)
+    else:
+        boxes = [(0, 0, width, height)]
+        decision_policy = "aggregate"
+
+    per_model_scores = {item["name"]: [] for item in ensemble_models}
+    with torch.no_grad():
+        for box in boxes:
+            crop = img.crop(box)
+            for item in ensemble_models:
+                tensor = _image_to_model_tensor(crop, item.get("input_mode", "rgb"))
+                output = item["model"](tensor)
+                prob = torch.exp(output[:, 1])[0].item()
+                per_model_scores[item["name"]].append(prob)
+
+    scores = []
+    for item in ensemble_models:
+        values = per_model_scores[item["name"]]
+        threshold = item["threshold"]
+        probability = _aggregate_scores(values, "topk_mean", MULTICROP_TOP_K)
+        crop_mean = sum(values) / len(values) if values else 0.0
+        crop_topk = _aggregate_scores(values, "topk_mean", MULTICROP_TOP_K)
+        crop_max = max(values) if values else 0.0
+        decision_probability = crop_mean if decision_policy == "mean" else probability
+        hit_count = sum(1 for value in values if value >= threshold)
+        hit_ratio = hit_count / len(values) if values else 0.0
+        row = {
+            "name": item["name"],
+            "display_name": item["display_name"],
+            "probability": probability,
+            "probability_pct": probability * 100.0,
+            "decision_probability": decision_probability,
+            "decision_probability_pct": decision_probability * 100.0,
+            "threshold": threshold,
+            "threshold_pct": threshold * 100.0,
+            "suspicious_detected": False,
+            "router_score": decision_probability / max(threshold, 1e-9),
+            "input_mode": item.get("input_mode", "rgb"),
+            "crop_max_pct": crop_max * 100.0,
+            "crop_mean": crop_mean,
+            "crop_mean_pct": crop_mean * 100.0,
+            "crop_topk": crop_topk,
+            "crop_topk_pct": crop_topk * 100.0,
+            "crop_hit_count": hit_count,
+            "crop_hit_ratio_pct": hit_ratio * 100.0,
+            "crop_hit_ratio": hit_ratio,
+        }
+        row["high_detected"] = _is_multicrop_detected(row, decision_policy)
+        row["suspicious_detected"] = (
+            row["high_detected"]
+            if use_multicrop
+            else decision_probability >= max(0.0, threshold - suspicious_margin)
+        )
+        scores.append(row)
+
+    route = max(
+        scores,
+        key=lambda row: (
+            int(row["high_detected"]),
+            row["router_score"],
+            row["probability"] / max(row["threshold"], 1e-9),
+        ),
+    )
+    return {
+        "stego_prob_pct": route["decision_probability_pct"],
+        "route_model": route["name"],
+        "route_display_name": route["display_name"],
+        "route_threshold_pct": route["threshold_pct"],
+        "high_detected": any(row["high_detected"] for row in scores),
+        "suspicious_detected": any(row["suspicious_detected"] for row in scores),
+        "model_scores": scores,
+        "multicrop": {
+            "enabled": use_multicrop,
+            "crop_count": len(boxes),
+            "decision_policy": decision_policy,
+            "hit_ratio_threshold_pct": MULTICROP_HIT_RATIO_THRESHOLD * 100.0,
+        },
+    }
+
+
 def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
     if not ensemble_models:
         return {
@@ -424,8 +604,21 @@ def _classify_scan(
     aletheia_suspicious = bool(aletheia_result.get("suspicious"))
     ensemble_high = bool(ensemble_result and ensemble_result.get("high_detected"))
     ensemble_suspicious = bool(ensemble_result and ensemble_result.get("suspicious_detected"))
+    multicrop_enabled = bool(
+        ensemble_result
+        and ensemble_result.get("multicrop", {}).get("enabled")
+    )
 
-    if ensemble_high or stego_prob_pct >= high_threshold or aletheia_suspicious:
+    if aletheia_suspicious:
+        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+    if multicrop_enabled:
+        if ensemble_high:
+            return "HIGH", "SUSPICIOUS", "QUARANTINE"
+        if ensemble_suspicious:
+            return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
+        return "LOW", "CLEAN", "BYPASS"
+
+    if ensemble_high or stego_prob_pct >= high_threshold:
         return "HIGH", "SUSPICIOUS", "QUARANTINE"
     if ensemble_suspicious or stego_prob_pct >= medium_threshold:
         return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
@@ -1542,13 +1735,8 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     import numpy as np
 
     img = Image.open(io.BytesIO(contents)).convert("RGB")
-    img = img.resize((256, 256))
 
-    img_array = np.array(img)
-    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float() / 255.0
-    img_tensor = img_tensor.unsqueeze(0).to(device)
-
-    ensemble_result = _predict_ensemble(img_tensor)
+    ensemble_result = _predict_ensemble_image(img, img_format)
     stego_prob_pct = ensemble_result["stego_prob_pct"]
     aletheia_result = _run_aletheia(input_path, img_format)
     high_threshold, medium_threshold = get_detection_thresholds()
@@ -1586,10 +1774,17 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         except Exception:
             pass
 
+    logged_stego_prob_pct = stego_prob_pct
+    if (
+        verdict == "CLEAN"
+        and ensemble_result.get("multicrop", {}).get("enabled")
+    ):
+        logged_stego_prob_pct = min(stego_prob_pct, max(0.0, medium_threshold - 0.1))
+
     _record_audit(
         direction=direction,
         original_name=display_name,
-        stego_prob_pct=stego_prob_pct,
+        stego_prob_pct=logged_stego_prob_pct,
         risk_level=risk_level,
         verdict=verdict,
         action=action,
@@ -1605,7 +1800,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     """, (
         file_id,
         display_name,
-        round(stego_prob_pct, 1),
+        round(logged_stego_prob_pct, 1),
         None,
         datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
         risk_level,
@@ -1620,7 +1815,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
 
     return {
         "original_name": display_name,
-        "stego_probability": round(stego_prob_pct, 1),
+        "stego_probability": round(logged_stego_prob_pct, 1),
         "risk_level": risk_level,
         "verdict": verdict,
         "action": action,
@@ -1629,6 +1824,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
             "route_model": ensemble_result.get("route_model"),
             "route_display_name": ensemble_result.get("route_display_name"),
             "model_scores": ensemble_result.get("model_scores", []),
+            "multicrop": ensemble_result.get("multicrop", {}),
         },
         "sanitized_path": output_path,
         "cdr": cdr_info,
