@@ -1847,6 +1847,8 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
 
     results = []
     suspicious_count = 0
+    policy_removed_count = 0
+    archive_policy_findings = []
     total_uncompressed = 0
     image_count = 0
 
@@ -1898,23 +1900,51 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
                 out_member = str(PurePosixPath(member_name).with_suffix(".sanitized.jpg"))
                 zout.write(scan_result["sanitized_path"], out_member)
 
-            elif ALLOW_NON_IMAGE_IN_ARCHIVE:
-                # 기본값 false.
-                # 보안 게이트웨이 관점에서는 이미지 외 파일은 드롭하는 편이 안전하다.
-                zout.writestr(member_name, raw)
+            else:
+                member_findings = _attachment_policy_findings(
+                    member_name,
+                    "application/octet-stream",
+                    raw,
+                )
+
+                if member_findings:
+                    policy_removed_count += 1
+                    archive_policy_findings.extend(member_findings)
+                    _record_audit(
+                        direction=direction,
+                        original_name=f"{archive_name}::{member_name}",
+                        stego_prob_pct=100.0,
+                        risk_level="HIGH",
+                        verdict="SUSPICIOUS",
+                        action="POLICY_SANITIZED",
+                        file_id=f"{file_id}_policy_{policy_removed_count}",
+                    )
+                    continue
+
+                if ALLOW_NON_IMAGE_IN_ARCHIVE:
+                    # 기본값 false.
+                    # 보안 게이트웨이 관점에서는 이미지 외 파일은 드롭하는 편이 안전하다.
+                    zout.writestr(member_name, raw)
+                else:
+                    policy_removed_count += 1
 
     if image_count == 0:
         raise HTTPException(status_code=400, detail="No supported images found inside archive")
 
-    overall_verdict = "SUSPICIOUS" if suspicious_count else "CLEAN"
+    has_policy_findings = bool(archive_policy_findings)
+    overall_verdict = "SUSPICIOUS" if suspicious_count or has_policy_findings else "CLEAN"
 
     overall_risk = (
         "HIGH"
-        if any(r["risk_level"] == "HIGH" for r in results)
+        if has_policy_findings or any(r["risk_level"] == "HIGH" for r in results)
         else ("MEDIUM" if suspicious_count else "LOW")
     )
 
-    overall_action = "QUARANTINE" if suspicious_count else "BYPASS"
+    overall_action = (
+        "POLICY_SANITIZED"
+        if has_policy_findings
+        else ("QUARANTINE" if suspicious_count else "BYPASS")
+    )
     max_prob = max(r["stego_probability"] for r in results)
 
     # 압축파일 전체 요약 로그 1개 추가.
@@ -1937,6 +1967,8 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         "stego_probability": max_prob,
         "image_count": image_count,
         "suspicious_count": suspicious_count,
+        "policy_removed_count": policy_removed_count,
+        "policy_findings": sorted(set(archive_policy_findings)),
     }
 
 # ─────────────────────────────────────────────────
@@ -2200,6 +2232,8 @@ async def scan_and_sanitize(
           "archive": {
               "image_count": result["image_count"],
               "suspicious_count": result["suspicious_count"],
+              "policy_removed_count": result["policy_removed_count"],
+              "policy_findings": result["policy_findings"],
           },
           "sanitized_path": result["sanitized_path"],
       }
