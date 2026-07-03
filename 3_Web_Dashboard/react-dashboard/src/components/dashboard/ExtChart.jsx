@@ -1,17 +1,23 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
-export default function ExtChart({ logs }) {
-  const counts = {};
-  logs.forEach(log => {
-    if (log.verdict !== 'SUSPICIOUS') return;
-    const name = log.original_name || '';
-    const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '기타';
-    counts[ext] = (counts[ext] || 0) + 1;
-  });
-
-  const data = Object.entries(counts)
-    .map(([ext, count]) => ({ ext: `.${ext}`, count }))
-    .sort((a, b) => b.count - a.count);
+export default function ExtChart({ logs = [], rows }) {
+  const data = rows
+    ? rows.map(row => ({
+        ext: row.extension === 'unknown' ? '기타' : `.${row.extension}`,
+        count: row.suspicious_count || 0,
+        avgRisk: row.avg_risk_score || 0,
+        mime: row.mime_type || 'unknown',
+      })).filter(row => row.count > 0)
+        .sort((a, b) => b.count - a.count)
+    : Object.entries(logs.reduce((counts, log) => {
+        if (log.verdict !== 'SUSPICIOUS') return counts;
+        const name = log.original_name || '';
+        const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '기타';
+        counts[ext] = (counts[ext] || 0) + 1;
+        return counts;
+      }, {}))
+        .map(([ext, count]) => ({ ext: `.${ext}`, count }))
+        .sort((a, b) => b.count - a.count);
 
   if (data.length === 0) {
     return <div className="empty-state">탐지된 파일이 없습니다</div>;
@@ -27,7 +33,12 @@ export default function ExtChart({ logs }) {
         <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
         <Tooltip
           contentStyle={{ background: '#ffffff', border: '1px solid #e8e0d0', fontSize: 11, borderRadius: 8 }}
-          formatter={(val) => [val, '탐지 건수']}
+          formatter={(val, name, item) => {
+            if (name === 'count' && item?.payload?.avgRisk != null) {
+              return [`${val}건 · 평균 ${item.payload.avgRisk.toFixed ? item.payload.avgRisk.toFixed(1) : item.payload.avgRisk}%`, '탐지 건수'];
+            }
+            return [val, '탐지 건수'];
+          }}
         />
         <Bar dataKey="count" radius={[4, 4, 0, 0]}>
           {data.map((_, i) => (

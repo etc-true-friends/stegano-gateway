@@ -14,16 +14,24 @@ const CARDS = [
   { key: 'processed', label: '처리 완료', color: PALETTE.sanitized },
 ];
 
-export default function DailyStatsSummary({ logs }) {
-  const values = logs.reduce((acc, log) => {
-    const verdict = getVerdictBucket(log);
-    const action = getActionBucket(log);
-    acc.total += 1;
-    if (verdict === 'suspicious') acc.suspicious += 1;
-    if (verdict === 'clean') acc.clean += 1;
-    if (['policy', 'quarantine', 'sanitized', 'bypass'].includes(action)) acc.processed += 1;
-    return acc;
-  }, { total: 0, suspicious: 0, clean: 0, processed: 0 });
+export default function DailyStatsSummary({ logs = [], rows }) {
+  const values = rows
+    ? rows.reduce((acc, row) => {
+        acc.total += row.total_count || 0;
+        acc.suspicious += row.suspicious_count || 0;
+        acc.clean += row.clean_count || 0;
+        acc.processed += (row.policy_count || 0) + (row.quarantine_count || 0) + (row.cdr_count || 0) + (row.bypass_count || 0);
+        return acc;
+      }, { total: 0, suspicious: 0, clean: 0, processed: 0 })
+    : logs.reduce((acc, log) => {
+        const verdict = getVerdictBucket(log);
+        const action = getActionBucket(log);
+        acc.total += 1;
+        if (verdict === 'suspicious') acc.suspicious += 1;
+        if (verdict === 'clean') acc.clean += 1;
+        if (['policy', 'quarantine', 'sanitized', 'bypass'].includes(action)) acc.processed += 1;
+        return acc;
+      }, { total: 0, suspicious: 0, clean: 0, processed: 0 });
 
   return (
     <div className="stat-grid">
