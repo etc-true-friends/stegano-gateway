@@ -1,12 +1,42 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PanelCard from '../components/common/PanelCard';
 import DateRangeFilter from '../components/report/DateRangeFilter';
 import DailyStatsSummary from '../components/report/DailyStatsSummary';
 import DailyTrendChart from '../components/report/DailyTrendChart';
+import { fetchDailyDetectionReport } from '../api/gateway';
 import { useDateRangeFilter } from '../hooks/useDateRangeFilter';
+import { makeDailyDetectionRows } from '../utils/reportStats';
 
 export default function DailyStatsPage({ audit }) {
   const { logs } = audit;
   const { startDate, setStartDate, endDate, setEndDate, activeRange, applyQuickRange, filteredLogs } = useDateRangeFilter(logs);
+  const [remoteRows, setRemoteRows] = useState(null);
+  const [usingFallback, setUsingFallback] = useState(false);
+
+  const loadReport = useCallback(async () => {
+    try {
+      const data = await fetchDailyDetectionReport({
+        period: 'day',
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+      });
+      setRemoteRows(data.rows || []);
+      setUsingFallback(false);
+    } catch {
+      setRemoteRows(null);
+      setUsingFallback(true);
+    }
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    const id = setTimeout(loadReport, 0);
+    return () => clearTimeout(id);
+  }, [loadReport]);
+
+  const reportRows = useMemo(
+    () => remoteRows || makeDailyDetectionRows(filteredLogs, 'day'),
+    [remoteRows, filteredLogs],
+  );
 
   return (
     <div className="page-content" style={{ maxWidth: '100%' }}>
@@ -45,20 +75,23 @@ export default function DailyStatsPage({ audit }) {
             {label}
           </span>
         ))}
+        <span style={{ marginLeft: 'auto', color: '#94a3b8', fontSize: 11 }}>
+          {usingFallback ? '로컬 로그 집계' : 'API 집계'}
+        </span>
       </div>
 
       <div style={{ marginTop: 16 }}>
         <PanelCard title="요약">
-          <DailyStatsSummary logs={filteredLogs} />
+          <DailyStatsSummary logs={filteredLogs} rows={reportRows} />
         </PanelCard>
       </div>
 
       <div className="daily-stats-grid" style={{ marginTop: 16 }}>
         <PanelCard title="일별 판정 분포">
-          <DailyTrendChart logs={filteredLogs} mode="verdict" />
+          <DailyTrendChart logs={filteredLogs} rows={reportRows} mode="verdict" />
         </PanelCard>
         <PanelCard title="일별 처리 분포">
-          <DailyTrendChart logs={filteredLogs} mode="action" />
+          <DailyTrendChart logs={filteredLogs} rows={reportRows} mode="action" />
         </PanelCard>
       </div>
     </div>

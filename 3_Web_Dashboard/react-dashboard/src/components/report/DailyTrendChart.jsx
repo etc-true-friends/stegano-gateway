@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getActionBucket, getEventDate, getVerdictBucket } from '../../utils/detectionStats';
+import { rowsToDailyTrendChart } from '../../utils/reportStats';
 
 const PALETTE = {
   navy: '#1e2a4a',
@@ -42,8 +43,8 @@ function makeDailyRows(logs) {
   return Object.values(counts).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export default function DailyTrendChart({ logs, mode = 'verdict' }) {
-  const data = makeDailyRows(logs);
+export default function DailyTrendChart({ logs = [], rows, mode = 'verdict' }) {
+  const data = rows ? rowsToDailyTrendChart(rows) : makeDailyRows(logs);
 
   if (data.length === 0) {
     return <div className="empty-state">선택한 기간에 탐지 기록이 없습니다</div>;

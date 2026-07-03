@@ -38,6 +38,21 @@ export async function fetchCdrStatus() {
   return data;
 }
 
+export async function fetchDailyDetectionReport(params = {}) {
+  const { data } = await api.get('/reports/daily-detections', { params });
+  return data;
+}
+
+export async function fetchRiskTrendReport(params = {}) {
+  const { data } = await api.get('/reports/risk-trend', { params });
+  return data;
+}
+
+export async function fetchFileTypeReport(params = {}) {
+  const { data } = await api.get('/reports/file-types', { params });
+  return data;
+}
+
 export async function scanFile(file) {
     const form = new FormData();
     form.append('file', file);

@@ -6,6 +6,7 @@ import AuditLogPage from './pages/AuditLogPage';
 import DetectionHistoryPage from './pages/DetectionHistoryPage';
 import DailyStatsPage from './pages/DailyStatsPage';
 import FileTypeReportPage from './pages/FileTypeReportPage';
+import RiskTrendPage from './pages/RiskTrendPage';
 import ThresholdSettingsPage from './pages/ThresholdSettingsPage';
 import QuarantinePage from './pages/QuarantinePage';
 import CdrVerifyPage from './pages/CdrVerifyPage';
@@ -23,6 +24,7 @@ const ROUTES = {
   'detection-history': DetectionHistoryPage,
   'daily-stats': DailyStatsPage,
   'file-type': FileTypeReportPage,
+  'risk-trend': RiskTrendPage,
   threshold: ThresholdSettingsPage,
   quarantine: QuarantinePage,
   cdr: CdrVerifyPage,

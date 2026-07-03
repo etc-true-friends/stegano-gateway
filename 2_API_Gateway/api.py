@@ -1014,6 +1014,225 @@ def _safe_rate(part: int | float, total: int | float) -> float:
     return round((part / total) * 100, 1)
 
 
+def _parse_report_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    except ValueError:
+        try:
+            return datetime.strptime(str(value)[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
+def _get_report_time(log: dict) -> datetime | None:
+    return _parse_report_date(
+        log.get("timestamp")
+        or log.get("attachment_created_at")
+        or log.get("mail_sent_at")
+        or log.get("mail_created_at")
+        or log.get("processed_at")
+    )
+
+
+def _report_bucket(dt: datetime, period: str) -> str:
+    if period == "month":
+        return dt.strftime("%Y-%m")
+    if period == "week":
+        iso_year, iso_week, _ = dt.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    return dt.strftime("%Y-%m-%d")
+
+
+def _risk_score(log: dict) -> float:
+    probability = log.get("stego_probability")
+    try:
+        if probability is not None:
+            return float(probability)
+    except (TypeError, ValueError):
+        pass
+
+    return {
+        "HIGH": 90.0,
+        "MEDIUM": 55.0,
+        "LOW": 15.0,
+        "UNKNOWN": 0.0,
+    }.get(str(log.get("risk_level") or "UNKNOWN").upper(), 0.0)
+
+
+def _filter_report_logs(logs: list[dict], start_date: str | None, end_date: str | None) -> list[dict]:
+    start = _parse_report_date(start_date)
+    end = _parse_report_date(end_date)
+    if end:
+        end = end.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    filtered = []
+    for log in logs:
+        dt = _get_report_time(log)
+        if not dt:
+            continue
+        if start and dt < start:
+            continue
+        if end and dt > end:
+            continue
+        filtered.append({**log, "_report_dt": dt})
+    return filtered
+
+
+def _empty_daily_row(bucket: str) -> dict:
+    return {
+        "date": bucket,
+        "total_count": 0,
+        "clean_count": 0,
+        "suspicious_count": 0,
+        "unscanned_count": 0,
+        "cdr_count": 0,
+        "policy_count": 0,
+        "quarantine_count": 0,
+        "bypass_count": 0,
+        "mail_count": 0,
+        "other_count": 0,
+        "high_count": 0,
+        "medium_count": 0,
+        "low_count": 0,
+        "unknown_count": 0,
+        "_risk_sum": 0.0,
+        "max_risk_score": 0.0,
+    }
+
+
+def _apply_report_counts(row: dict, log: dict) -> None:
+    verdict = str(log.get("verdict") or "").upper()
+    risk_level = str(log.get("risk_level") or "UNKNOWN").upper()
+    action = _normalize_action(log.get("action"))
+    score = _risk_score(log)
+
+    row["total_count"] += 1
+    row["_risk_sum"] += score
+    row["max_risk_score"] = max(row["max_risk_score"], score)
+
+    if verdict == "CLEAN":
+        row["clean_count"] += 1
+    elif verdict == "SUSPICIOUS":
+        row["suspicious_count"] += 1
+    elif verdict == "UNSCANNED":
+        row["unscanned_count"] += 1
+
+    if risk_level == "HIGH":
+        row["high_count"] += 1
+    elif risk_level == "MEDIUM":
+        row["medium_count"] += 1
+    elif risk_level == "LOW":
+        row["low_count"] += 1
+    else:
+        row["unknown_count"] += 1
+
+    if "POLICY" in action or "BLOCK" in action:
+        row["policy_count"] += 1
+    elif "QUARANTINE" in action:
+        row["quarantine_count"] += 1
+    elif "SANITIZED" in action or "CDR" in action:
+        row["cdr_count"] += 1
+    elif action in ("BYPASS", "PASSED"):
+        row["bypass_count"] += 1
+    elif action == "MAIL_ATTACHMENT":
+        row["mail_count"] += 1
+    else:
+        row["other_count"] += 1
+
+
+def _finalize_report_row(row: dict) -> dict:
+    total = row["total_count"]
+    row["avg_risk_score"] = round(row["_risk_sum"] / total, 1) if total else 0.0
+    row["max_risk_score"] = round(row["max_risk_score"], 1)
+    row.pop("_risk_sum", None)
+    return row
+
+
+@app.get("/reports/daily-detections")
+def get_daily_detection_report(start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+    period = period if period in ("day", "week", "month") else "day"
+    rows_by_bucket: dict[str, dict] = {}
+
+    for log in _filter_report_logs(get_audit().get("logs", []), start_date, end_date):
+        bucket = _report_bucket(log["_report_dt"], period)
+        row = rows_by_bucket.setdefault(bucket, _empty_daily_row(bucket))
+        _apply_report_counts(row, log)
+
+    rows = [_finalize_report_row(row) for _, row in sorted(rows_by_bucket.items())]
+    return {
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "rows": rows,
+    }
+
+
+@app.get("/reports/risk-trend")
+def get_risk_trend_report(start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+    period = period if period in ("day", "week", "month") else "day"
+    rows_by_bucket: dict[str, dict] = {}
+
+    for log in _filter_report_logs(get_audit().get("logs", []), start_date, end_date):
+        bucket = _report_bucket(log["_report_dt"], period)
+        row = rows_by_bucket.setdefault(bucket, _empty_daily_row(bucket))
+        _apply_report_counts(row, log)
+
+    rows = []
+    for _, row in sorted(rows_by_bucket.items()):
+        finalized = _finalize_report_row(row)
+        rows.append({
+            "bucket": finalized["date"],
+            "score": finalized["avg_risk_score"],
+            "avg_score": finalized["avg_risk_score"],
+            "max_score": finalized["max_risk_score"],
+            "total_count": finalized["total_count"],
+            "suspicious_count": finalized["suspicious_count"],
+            "high_count": finalized["high_count"],
+            "medium_count": finalized["medium_count"],
+            "low_count": finalized["low_count"],
+            "cdr_count": finalized["cdr_count"],
+            "policy_count": finalized["policy_count"],
+        })
+
+    return {
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "rows": rows,
+    }
+
+
+@app.get("/reports/file-types")
+def get_file_type_report(start_date: str | None = None, end_date: str | None = None):
+    rows_by_key: dict[tuple[str, str], dict] = {}
+
+    for log in _filter_report_logs(get_audit().get("logs", []), start_date, end_date):
+        extension = _get_extension(log.get("original_name"))
+        mime_type = log.get("attachment_mime_type") or "unknown"
+        key = (extension, mime_type)
+        row = rows_by_key.setdefault(key, {
+            "extension": extension,
+            "mime_type": mime_type,
+            **_empty_daily_row(extension),
+        })
+        _apply_report_counts(row, log)
+
+    rows = []
+    for _, row in sorted(rows_by_key.items(), key=lambda item: item[1]["total_count"], reverse=True):
+        finalized = _finalize_report_row(row)
+        finalized.pop("date", None)
+        rows.append(finalized)
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "rows": rows,
+    }
+
+
 @app.get("/dashboard/threat-overview")
 def get_threat_overview():
     audit_data = get_audit()

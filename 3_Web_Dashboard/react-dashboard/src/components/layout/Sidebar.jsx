@@ -25,7 +25,7 @@ const MENU_GROUPS = [
     items: [
       { label: '일별 탐지 통계', page: 'daily-stats' },
       { label: '파일 유형별 분석', page: 'file-type' },
-      { label: '위험도 추이', page: null },
+      { label: '위험도 추이', page: 'risk-trend' },
     ],
   },
   {
