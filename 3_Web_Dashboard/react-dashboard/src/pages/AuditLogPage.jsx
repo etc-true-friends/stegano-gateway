@@ -15,6 +15,16 @@ import {
   isPolicyBlockedLog,
 } from '../utils/auditLabels';
 
+// 필터 버튼 표시용 한글 라벨. 값(key)은 판정/Aletheia 비교 로직에 그대로 쓰이므로 변경 금지.
+const FILTER_LABELS = {
+  '전체': '전체',
+  CLEAN: '정상',
+  SUSPICIOUS: '위험',
+  SKIPPED: '검사 생략',
+  UNAVAILABLE: '검사 불가',
+  POLICY: '정책',
+};
+
 function getParticipantText(log) {
   const sender = log.sender_email || '-';
   const recipient = log.recipient_email || '-';
@@ -113,7 +123,7 @@ export default function AuditLogPage({ logs = [], onNavigate }) {
                 color: filter === f ? '#ffffff' : '#64748b',
               }}
             >
-              {f}
+              {FILTER_LABELS[f] || f}
             </button>
           ))}
         </div>
