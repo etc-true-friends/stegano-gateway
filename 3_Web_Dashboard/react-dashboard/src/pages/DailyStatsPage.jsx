@@ -18,6 +18,35 @@ export default function DailyStatsPage({ audit }) {
         />
       </PanelCard>
 
+      <div
+        style={{
+          marginTop: 12,
+          padding: '10px 14px',
+          border: '1px solid #e8e0d0',
+          borderRadius: 8,
+          background: '#faf7f2',
+          color: '#64748b',
+          fontSize: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        {[
+          ['정상', '#7ec8c8'],
+          ['위협', '#e05c5c'],
+          ['미검사', '#d4c5a9'],
+          ['CDR', '#1e2a4a'],
+          ['정책', '#8a3ffc'],
+        ].map(([label, color]) => (
+          <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 9, height: 9, borderRadius: 99, background: color }} />
+            {label}
+          </span>
+        ))}
+      </div>
+
       <div style={{ marginTop: 16 }}>
         <PanelCard title="요약">
           <DailyStatsSummary logs={filteredLogs} />

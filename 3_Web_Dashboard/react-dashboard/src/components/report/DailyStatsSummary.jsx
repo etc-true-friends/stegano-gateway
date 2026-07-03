@@ -1,10 +1,17 @@
 import { getActionBucket, getVerdictBucket } from '../../utils/detectionStats';
 
+const PALETTE = {
+  navy: '#1e2a4a',
+  low: '#7ec8c8',
+  high: '#e05c5c',
+  sanitized: '#1e2a4a',
+};
+
 const CARDS = [
-  { key: 'total', label: '전체 파일', color: '#1e2a4a' },
-  { key: 'suspicious', label: '위협 판정', color: '#dc2626' },
-  { key: 'clean', label: '정상 판정', color: '#059669' },
-  { key: 'processed', label: '처리 완료', color: '#5a7fa8' },
+  { key: 'total', label: '전체 파일', color: PALETTE.navy },
+  { key: 'suspicious', label: '위협 판정', color: PALETTE.high },
+  { key: 'clean', label: '정상 판정', color: PALETTE.low },
+  { key: 'processed', label: '처리 완료', color: PALETTE.sanitized },
 ];
 
 export default function DailyStatsSummary({ logs }) {
@@ -21,7 +28,14 @@ export default function DailyStatsSummary({ logs }) {
   return (
     <div className="stat-grid">
       {CARDS.map(card => (
-        <div key={card.key} className="stat-card" style={{ borderTop: `3px solid ${card.color}` }}>
+        <div
+          key={card.key}
+          className="stat-card"
+          style={{
+            borderTop: `3px solid ${card.color}`,
+            background: `linear-gradient(180deg, ${card.color}10 0%, #ffffff 42%)`,
+          }}
+        >
           <div className="stat-label" style={{ color: card.color, marginBottom: 6 }}>
             {card.label}
           </div>
