@@ -99,7 +99,8 @@ def init_db():
             action TEXT,
             file_id TEXT,
             sender_email TEXT,
-            recipient_email TEXT
+            recipient_email TEXT,
+            detection_engine TEXT
         )
     """)
     cursor.execute("""
@@ -152,6 +153,7 @@ def init_db():
         "file_id": "TEXT",
         "sender_email": "TEXT",
         "recipient_email": "TEXT",
+        "detection_engine": "TEXT",   # 위험 판정에 기여한 탐지 엔진(SRNet Ensemble/Policy Engine/Hybrid Detection). 정상은 NULL.
     }.items():
         if column_name not in audit_columns:
             cursor.execute(f"ALTER TABLE audit_logs ADD COLUMN {column_name} {column_type}")
@@ -594,6 +596,12 @@ def _predict_ensemble(img_tensor: torch.Tensor) -> dict:
     }
 
 
+# 감사 로그 "탐지 엔진" 컬럼 라벨. 정상 로그는 None(빈값)으로 남긴다.
+ENGINE_SRNET = "SRNet Ensemble"      # AI 앙상블 단독 위험 판정
+ENGINE_POLICY = "Policy Engine"      # 위험/이중 확장자, ZIP 내부 위험 파일 등 정책 처리
+ENGINE_HYBRID = "Hybrid Detection"   # SRNet/Aletheia 등 복합 기여 또는 Aletheia 단독(분리 애매)
+
+
 def _classify_scan(
     stego_prob_pct: float,
     aletheia_result: dict,
@@ -609,20 +617,24 @@ def _classify_scan(
         and ensemble_result.get("multicrop", {}).get("enabled")
     )
 
+    # 탐지 엔진 귀속:
+    # - Aletheia가 관여하면 SRNet과의 분리가 애매하므로 Hybrid Detection으로 묶는다.
+    # - 그 외 AI 앙상블 단독 판정은 SRNet Ensemble.
+    # - 위협이 없는 정상(CLEAN)은 귀속할 엔진이 없으므로 None(빈값).
     if aletheia_suspicious:
-        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+        return "HIGH", "SUSPICIOUS", "QUARANTINE", ENGINE_HYBRID
     if multicrop_enabled:
         if ensemble_high:
-            return "HIGH", "SUSPICIOUS", "QUARANTINE"
+            return "HIGH", "SUSPICIOUS", "QUARANTINE", ENGINE_SRNET
         if ensemble_suspicious:
-            return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
-        return "LOW", "CLEAN", "BYPASS"
+            return "MEDIUM", "SUSPICIOUS", "QUARANTINE", ENGINE_SRNET
+        return "LOW", "CLEAN", "BYPASS", None
 
     if ensemble_high or stego_prob_pct >= high_threshold:
-        return "HIGH", "SUSPICIOUS", "QUARANTINE"
+        return "HIGH", "SUSPICIOUS", "QUARANTINE", ENGINE_SRNET
     if ensemble_suspicious or stego_prob_pct >= medium_threshold:
-        return "MEDIUM", "SUSPICIOUS", "QUARANTINE"
-    return "LOW", "CLEAN", "BYPASS"
+        return "MEDIUM", "SUSPICIOUS", "QUARANTINE", ENGINE_SRNET
+    return "LOW", "CLEAN", "BYPASS", None
 
 
 def _aletheia_header_value(aletheia_result: dict) -> str:
@@ -882,7 +894,8 @@ def get_audit():
             action,
             file_id,
             sender_email,
-            recipient_email
+            recipient_email,
+            detection_engine
         FROM audit_logs
         ORDER BY timestamp ASC
     """)
@@ -1620,6 +1633,7 @@ def _scan_policy_attachment_bytes(contents: bytes, display_name: str, content_ty
         verdict="SUSPICIOUS",
         action="POLICY_SANITIZED",
         file_id=file_id,
+        detection_engine=ENGINE_POLICY,
     )
 
     sanitized_download_name = f"{os.path.splitext(safe_name)[0]}_sanitized.txt"
@@ -1649,11 +1663,13 @@ def _record_audit(
     file_id: str | None = None,
     sender_email: str | None = None,
     recipient_email: str | None = None,
+    detection_engine: str | None = None,
 ):
 
     """
     기존 audit_logs 테이블에 로그 저장.
     압축파일 내부 이미지 검사에서도 같은 로그 구조를 재사용한다.
+    detection_engine: 위험 판정에 기여한 엔진 라벨. 정상 로그는 None(빈값).
     """
     timestamp_str = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
@@ -1661,8 +1677,8 @@ def _record_audit(
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO audit_logs
-        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action, file_id, sender_email, recipient_email)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (timestamp, direction, original_name, stego_probability, risk_level, verdict, action, file_id, sender_email, recipient_email, detection_engine)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         timestamp_str,
         direction,
@@ -1674,6 +1690,7 @@ def _record_audit(
         file_id,
         sender_email,
         recipient_email,
+        detection_engine,
     ))
     conn.commit()
     conn.close()
@@ -1740,7 +1757,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     stego_prob_pct = ensemble_result["stego_prob_pct"]
     aletheia_result = _run_aletheia(input_path, img_format)
     high_threshold, medium_threshold = get_detection_thresholds()
-    risk_level, verdict, action = _classify_scan(
+    risk_level, verdict, action, detection_engine = _classify_scan(
         stego_prob_pct,
         aletheia_result,
         ensemble_result,
@@ -1789,6 +1806,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         verdict=verdict,
         action=action,
         file_id=file_id,
+        detection_engine=detection_engine,
     )
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -1819,6 +1837,7 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
         "risk_level": risk_level,
         "verdict": verdict,
         "action": action,
+        "detection_engine": detection_engine,
         "aletheia": aletheia_result,
         "ensemble": {
             "route_model": ensemble_result.get("route_model"),
@@ -1918,6 +1937,7 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
                         verdict="SUSPICIOUS",
                         action="POLICY_SANITIZED",
                         file_id=f"{file_id}_policy_{policy_removed_count}",
+                        detection_engine=ENGINE_POLICY,
                     )
                     continue
 
@@ -1947,6 +1967,18 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
     )
     max_prob = max(r["stego_probability"] for r in results)
 
+    # 요약 행 엔진 귀속: 내부 이미지별 엔진 + 정책 위반 여부를 취합.
+    # 서로 다른 엔진이 함께 기여했으면 Hybrid Detection, 정상만 있으면 빈값(None).
+    summary_engines = {r.get("detection_engine") for r in results if r.get("detection_engine")}
+    if has_policy_findings:
+        summary_engines.add(ENGINE_POLICY)
+    if len(summary_engines) > 1:
+        overall_engine = ENGINE_HYBRID
+    elif summary_engines:
+        overall_engine = next(iter(summary_engines))
+    else:
+        overall_engine = None
+
     # 압축파일 전체 요약 로그 1개 추가.
     # 내부 이미지별 로그는 _scan_image_bytes()에서 이미 저장됨.
     _record_audit(
@@ -1957,6 +1989,7 @@ def _scan_archive_bytes(contents: bytes, archive_name: str, direction: str, file
         verdict=overall_verdict,
         action=f"ARCHIVE_{overall_action}",
         file_id=file_id,
+        detection_engine=overall_engine,
     )
 
     return {

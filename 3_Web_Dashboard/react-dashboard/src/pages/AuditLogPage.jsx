@@ -1,6 +1,6 @@
 import PanelCard from '../components/common/PanelCard';
 import { useState } from 'react';
-import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../utils/auditLabels';
+import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog, getEngineLabel, ENGINE_COLORS, ENGINE_BG } from '../utils/auditLabels';
 
 function getParticipantText(log) {
   const sender = log.sender_email || '-';
@@ -21,6 +21,7 @@ export default function AuditLogPage({ logs }) {
       log.recipient_email,
       log.direction,
       log.action,
+      log.detection_engine,
     ].join(' ').toLowerCase();
     const matchSearch = searchable.includes(keyword);
     const matchFilter = filter === '전체' || log.verdict === filter || (filter === 'POLICY' && isPolicyBlockedLog(log));
@@ -78,12 +79,13 @@ export default function AuditLogPage({ logs }) {
                 <th>위험도(%)</th>
                 <th>등급</th>
                 <th>판정</th>
+                <th>탐지 엔진</th>
                 <th>처리</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="empty-state">검색 결과가 없습니다</td></tr>
+                <tr><td colSpan={9} className="empty-state">검색 결과가 없습니다</td></tr>
               ) : (
                 filtered.map((log, i) => {
                   const verdict = log.verdict || '-';
@@ -111,6 +113,23 @@ export default function AuditLogPage({ logs }) {
                           background: isPolicy ? '#8a3ffc' : log.risk_level === 'HIGH' ? '#e05c5c' : log.risk_level === 'MEDIUM' ? '#d4c5a9' : '#7ec8c8',
                         }}/>
                         {isPolicy ? '정책' : getVerdictLabel(verdict)}
+                      </td>
+                      <td>
+                        {log.detection_engine ? (
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '2px 8px',
+                            borderRadius: 20,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: ENGINE_COLORS[log.detection_engine] || '#64748b',
+                            background: ENGINE_BG[log.detection_engine] || '#f1f5f9',
+                          }}>
+                            {getEngineLabel(log)}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>-</span>
+                        )}
                       </td>
                       <td>{getActionLabel(log.action)}</td>
                     </tr>

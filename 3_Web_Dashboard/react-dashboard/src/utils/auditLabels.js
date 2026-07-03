@@ -32,6 +32,24 @@ export function getVerdictLabel(verdict) {
   return verdict || '-';
 }
 
+// 탐지 엔진 컬럼: 위험 판정에 기여한 엔진만 표시. 정상 로그는 빈값.
+// 위험도 뱃지처럼 배경은 연하게, 글씨는 같은 계열 진한 색으로.
+export const ENGINE_COLORS = {
+  'SRNet Ensemble': '#3b82f6',
+  'Hybrid Detection': '#8a3ffc',
+  'Policy Engine': '#e0894e',
+};
+
+export const ENGINE_BG = {
+  'SRNet Ensemble': '#eff6ff',
+  'Hybrid Detection': '#f4edff',
+  'Policy Engine': '#fdf3ea',
+};
+
+export function getEngineLabel(log) {
+  return log?.detection_engine || '-';
+}
+
 export function getActionLabel(action) {
   const normalized = normalizeAction(action);
   if (normalized === 'BYPASS' || normalized === 'PASSED') return '통과';

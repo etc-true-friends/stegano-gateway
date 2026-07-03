@@ -54,6 +54,11 @@ function makeLog(minutesAgo) {
     risk_level,
     verdict,
     action: verdict === 'SUSPICIOUS' ? (prob >= 70 ? 'quarantined' : 'sanitized') : 'passed',
+    // 정상은 빈값, 위험 건만 탐지 엔진 부여 (SRNet Ensemble / Hybrid Detection / Policy Engine)
+    detection_engine:
+      verdict !== 'SUSPICIOUS'
+        ? null
+        : ['SRNet Ensemble', 'Hybrid Detection', 'Policy Engine'][randomBetween(0, 2)],
   };
 }
 
