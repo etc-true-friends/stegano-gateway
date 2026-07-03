@@ -1,41 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import PanelCard from '../components/common/PanelCard';
 import DateRangeFilter from '../components/report/DateRangeFilter';
 import DailyStatsSummary from '../components/report/DailyStatsSummary';
 import DailyTrendChart from '../components/report/DailyTrendChart';
-import { fetchDailyDetectionReport } from '../api/gateway';
 import { useDateRangeFilter } from '../hooks/useDateRangeFilter';
 import { makeDailyDetectionRows } from '../utils/reportStats';
 
 export default function DailyStatsPage({ audit }) {
   const { logs } = audit;
   const { startDate, setStartDate, endDate, setEndDate, activeRange, applyQuickRange, filteredLogs } = useDateRangeFilter(logs);
-  const [remoteRows, setRemoteRows] = useState(null);
-  const [usingFallback, setUsingFallback] = useState(false);
-
-  const loadReport = useCallback(async () => {
-    try {
-      const data = await fetchDailyDetectionReport({
-        period: 'day',
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-      });
-      setRemoteRows(data.rows || []);
-      setUsingFallback(false);
-    } catch {
-      setRemoteRows(null);
-      setUsingFallback(true);
-    }
-  }, [startDate, endDate]);
-
-  useEffect(() => {
-    const id = setTimeout(loadReport, 0);
-    return () => clearTimeout(id);
-  }, [loadReport]);
 
   const reportRows = useMemo(
-    () => remoteRows || makeDailyDetectionRows(filteredLogs, 'day'),
-    [remoteRows, filteredLogs],
+    () => makeDailyDetectionRows(filteredLogs, 'day'),
+    [filteredLogs],
   );
 
   return (
@@ -76,7 +53,7 @@ export default function DailyStatsPage({ audit }) {
           </span>
         ))}
         <span style={{ marginLeft: 'auto', color: '#94a3b8', fontSize: 11 }}>
-          {usingFallback ? '로컬 로그 집계' : 'API 집계'}
+          감사 로그 집계
         </span>
       </div>
 

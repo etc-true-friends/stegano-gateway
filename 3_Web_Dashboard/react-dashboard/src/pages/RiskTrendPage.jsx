@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import PanelCard from '../components/common/PanelCard';
 import DateRangeFilter from '../components/report/DateRangeFilter';
-import { fetchRiskTrendReport } from '../api/gateway';
 import { useDateRangeFilter } from '../hooks/useDateRangeFilter';
 import { makeRiskTrendRows } from '../utils/reportStats';
 
@@ -42,33 +41,11 @@ function MetricCard({ label, value, color = PALETTE.navy }) {
 export default function RiskTrendPage({ audit }) {
   const { logs } = audit;
   const [period, setPeriod] = useState('day');
-  const [remoteRows, setRemoteRows] = useState(null);
-  const [usingFallback, setUsingFallback] = useState(false);
   const { startDate, setStartDate, endDate, setEndDate, activeRange, applyQuickRange, filteredLogs } = useDateRangeFilter(logs, '최근 30일');
 
-  const loadReport = useCallback(async () => {
-    try {
-      const data = await fetchRiskTrendReport({
-        period,
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-      });
-      setRemoteRows(data.rows || []);
-      setUsingFallback(false);
-    } catch {
-      setRemoteRows(null);
-      setUsingFallback(true);
-    }
-  }, [period, startDate, endDate]);
-
-  useEffect(() => {
-    const id = setTimeout(loadReport, 0);
-    return () => clearTimeout(id);
-  }, [loadReport]);
-
   const rows = useMemo(
-    () => remoteRows || makeRiskTrendRows(filteredLogs, period),
-    [remoteRows, filteredLogs, period],
+    () => makeRiskTrendRows(filteredLogs, period),
+    [filteredLogs, period],
   );
 
   const summary = useMemo(() => {
@@ -126,7 +103,7 @@ export default function RiskTrendPage({ audit }) {
               </button>
             ))}
             <span style={{ marginLeft: 'auto', color: '#94a3b8', fontSize: 11, fontWeight: 700 }}>
-              {usingFallback ? '로컬 로그 집계' : 'API 집계'}
+              감사 로그 집계
             </span>
           </div>
         </div>
