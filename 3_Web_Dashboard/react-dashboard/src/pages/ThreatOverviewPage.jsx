@@ -59,15 +59,6 @@ const riskClass = (risk) => {
     return 'unknown';
 };
 
-const probabilityRiskClass = (value) => {
-    const numeric = Number(value);
-
-    if (Number.isNaN(numeric)) return 'unknown';
-    if (numeric >= 75) return 'high';
-    if (numeric >= 30) return 'medium';
-    return 'low';
-};
-
 const maxValue = (obj) => {
     const values = Object.values(obj || {}).map((value) => number(value));
     return Math.max(...values, 1);
@@ -337,7 +328,7 @@ export default function ThreatOverviewPage() {
                             <div className="impact-row">
                                 <div>
                                     <strong>MES</strong>
-                                    <p>AI 검사 및 CDR 무해화 처리</p>
+                                    <p>AI 검사 및 CDR 공정 개입</p>
                                 </div>
                                 <span className="impact-count high">{operationImpact.mesImpact}건</span>
                             </div>
@@ -345,7 +336,7 @@ export default function ThreatOverviewPage() {
                             <div className="impact-row">
                                 <div>
                                     <strong>WMS</strong>
-                                    <p>정책 제거 및 대체 전달 대상</p>
+                                    <p>격리 저장소 보류 파일</p>
                                 </div>
                                 <span className="impact-count medium">{operationImpact.wmsImpact}건</span>
                             </div>
@@ -353,7 +344,7 @@ export default function ThreatOverviewPage() {
                             <div className="impact-row">
                                 <div>
                                     <strong>ERP</strong>
-                                    <p>업무 정책 위반 검토 필요</p>
+                                    <p>정책 위반 검토 필요</p>
                                 </div>
                                 <span className="impact-count low">{operationImpact.erpImpact}건</span>
                             </div>
@@ -405,12 +396,8 @@ export default function ThreatOverviewPage() {
                                             <p>{formatDateTime(item.processed_at)}</p>
                                         </div>
                                         <div className="cdr-score">
-                                            <span className={`cdr-prob ${probabilityRiskClass(item.stego_probability)}`}>
-                                                원본 탐지율 {percent(item.stego_probability)}
-                                            </span>
-                                            <span className="cdr-status">
-                                                CDR 무해화 처리
-                                            </span>
+                                            <span>{percent(item.stego_probability)}</span>
+
                                         </div>
                                     </div>
                                 ))
@@ -694,15 +681,15 @@ const styles = `
 }
 
 .summary-card.red .summary-value {
-  color: #e05c5c;
+  color: #dc2626;
 }
 
 .summary-card.orange .summary-value {
-  color: #8a6a2f;
+  color: #d97706;
 }
 
 .summary-card.green .summary-value {
-  color: #1e2a4a;
+  color: #059669;
 }
 
 .overview-grid {
@@ -839,21 +826,18 @@ const styles = `
 }
 
 .impact-count.high {
-  color: #e05c5c;
-  background: #fff7f7;
-  border: 1px solid #f1c8c8;
+  color: #dc2626;
+  background: #fee2e2;
 }
 
 .impact-count.medium {
-  color: #8a6a2f;
-  background: #faf7f2;
-  border: 1px solid #d4c5a9;
+  color: #d97706;
+  background: #fef3c7;
 }
 
 .impact-count.low {
-  color: #1e2a4a;
-  background: #f6f1e8;
-  border: 1px solid #d4c5a9;
+  color: #2563eb;
+  background: #dbeafe;
 }
 
 .status-list {
@@ -903,21 +887,18 @@ const styles = `
 }
 
 .status-badge.running {
-  color: #007a52;
-  background: #e8fff5;
-  border: 1px solid #9be7c5;
+  color: #047857;
+  background: #d1fae5;
 }
 
 .status-badge.degraded {
-  color: #8a6a2f;
-  background: #faf7f2;
-  border: 1px solid #d4c5a9;
+  color: #b45309;
+  background: #fef3c7;
 }
 
 .status-badge.down {
-  color: #e05c5c;
-  background: #fff7f7;
-  border: 1px solid #f1c8c8;
+  color: #b91c1c;
+  background: #fee2e2;
 }
 
 .status-badge.unknown {
@@ -985,15 +966,15 @@ const styles = `
 }
 
 .bar-fill.red {
-  background: #e05c5c;
+  background: #ef4444;
 }
 
 .bar-fill.orange {
-  background: #d4c5a9;
+  background: #d99a26;
 }
 
 .bar-fill.green {
-  background: #7ec8c8;
+  background: #10b981;
 }
 
 .bar-fill.navy {
@@ -1012,14 +993,13 @@ const styles = `
 }
 
 .event-table-wrap {
-  max-height: 360px;
+  max-height: 660px;
   overflow: auto;
   padding: 20px;
 }
 
 .event-table {
   width: 100%;
-  table-layout: fixed;
   border-collapse: collapse;
   background: #fffaf3;
   font-size: 13px;
@@ -1044,33 +1024,12 @@ const styles = `
   vertical-align: middle;
 }
 
-.event-table th:nth-child(1),
-.event-table td:nth-child(1) {
-  width: 92px;
-}
-
-.event-table th:nth-child(3),
-.event-table td:nth-child(3) {
-  width: 96px;
-}
-
-.event-table th:nth-child(4),
-.event-table td:nth-child(4) {
-  width: 128px;
-}
-
-.event-table td:nth-child(4) {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .event-table tr:hover td {
   background: #fff4e1;
 }
 
 .file-name {
-  max-width: 100%;
+  max-width: 170px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1087,21 +1046,18 @@ const styles = `
 }
 
 .risk-badge.high {
-  color: #e05c5c;
-  background: #fff7f7;
-  border: 1px solid #f1c8c8;
+  color: #dc2626;
+  background: #fee2e2;
 }
 
 .risk-badge.medium {
-  color: #8a6a2f;
-  background: #faf7f2;
-  border: 1px solid #d4c5a9;
+  color: #d97706;
+  background: #fef3c7;
 }
 
 .risk-badge.low {
-  color: #1e2a4a;
-  background: #f6f1e8;
-  border: 1px solid #d4c5a9;
+  color: #059669;
+  background: #d1fae5;
 }
 
 .risk-badge.unknown {
@@ -1147,50 +1103,15 @@ const styles = `
 
 .cdr-score {
   display: flex;
-  align-items: flex-end;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
   white-space: nowrap;
   font-size: 13px;
   font-weight: 700;
 }
 
-.cdr-prob {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 9px;
-  border-radius: 999px;
-  border: 1px solid #e8e0d0;
-  background: #fff;
-}
-
-.cdr-prob.high {
-  color: #e05c5c;
-  background: #fff7f7;
-  border-color: #f1c8c8;
-}
-
-.cdr-prob.medium {
-  color: #8a6a2f;
-  background: #faf7f2;
-  border-color: #d4c5a9;
-}
-
-.cdr-prob.low {
-  color: #1e2a4a;
-  background: #f6f1e8;
-  border-color: #d4c5a9;
-}
-
-.cdr-prob.unknown {
-  color: #64748b;
-  background: #f8fafc;
-}
-
-.cdr-status {
-  color: #1e2a4a;
-  font-size: 12px;
-  font-weight: 600;
+.cdr-score span:first-child {
+  color: #dc2626;
 }
 
 
