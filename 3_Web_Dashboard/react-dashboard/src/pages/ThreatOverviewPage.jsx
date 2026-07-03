@@ -903,9 +903,9 @@ const styles = `
 }
 
 .status-badge.running {
-  color: #1e2a4a;
-  background: #f6f1e8;
-  border: 1px solid #d4c5a9;
+  color: #007a52;
+  background: #e8fff5;
+  border: 1px solid #9be7c5;
 }
 
 .status-badge.degraded {
@@ -1012,13 +1012,14 @@ const styles = `
 }
 
 .event-table-wrap {
-  max-height: 500px;
+  max-height: 360px;
   overflow: auto;
   padding: 20px;
 }
 
 .event-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   background: #fffaf3;
   font-size: 13px;
@@ -1043,12 +1044,33 @@ const styles = `
   vertical-align: middle;
 }
 
+.event-table th:nth-child(1),
+.event-table td:nth-child(1) {
+  width: 92px;
+}
+
+.event-table th:nth-child(3),
+.event-table td:nth-child(3) {
+  width: 96px;
+}
+
+.event-table th:nth-child(4),
+.event-table td:nth-child(4) {
+  width: 128px;
+}
+
+.event-table td:nth-child(4) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .event-table tr:hover td {
   background: #fff4e1;
 }
 
 .file-name {
-  max-width: 170px;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
