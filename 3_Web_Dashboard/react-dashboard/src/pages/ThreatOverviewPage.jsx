@@ -59,6 +59,15 @@ const riskClass = (risk) => {
     return 'unknown';
 };
 
+const probabilityRiskClass = (value) => {
+    const numeric = Number(value);
+
+    if (Number.isNaN(numeric)) return 'unknown';
+    if (numeric >= 75) return 'high';
+    if (numeric >= 30) return 'medium';
+    return 'low';
+};
+
 const maxValue = (obj) => {
     const values = Object.values(obj || {}).map((value) => number(value));
     return Math.max(...values, 1);
@@ -396,8 +405,9 @@ export default function ThreatOverviewPage() {
                                             <p>{formatDateTime(item.processed_at)}</p>
                                         </div>
                                         <div className="cdr-score">
-                                            <span>{percent(item.stego_probability)}</span>
-
+                                            <span className={`cdr-prob ${probabilityRiskClass(item.stego_probability)}`}>
+                                                원본 탐지율 {percent(item.stego_probability)}
+                                            </span>
                                         </div>
                                     </div>
                                 ))
@@ -681,15 +691,15 @@ const styles = `
 }
 
 .summary-card.red .summary-value {
-  color: #dc2626;
+  color: #e05c5c;
 }
 
 .summary-card.orange .summary-value {
-  color: #d97706;
+  color: #8a6a2f;
 }
 
 .summary-card.green .summary-value {
-  color: #059669;
+  color: #1e2a4a;
 }
 
 .overview-grid {
@@ -826,18 +836,18 @@ const styles = `
 }
 
 .impact-count.high {
-  color: #dc2626;
-  background: #fee2e2;
+  color: #e05c5c;
+  background: #fff7f7;
 }
 
 .impact-count.medium {
-  color: #d97706;
-  background: #fef3c7;
+  color: #8a6a2f;
+  background: #faf7f2;
 }
 
 .impact-count.low {
-  color: #2563eb;
-  background: #dbeafe;
+  color: #1e2a4a;
+  background: #f6f1e8;
 }
 
 .status-list {
@@ -887,18 +897,18 @@ const styles = `
 }
 
 .status-badge.running {
-  color: #047857;
-  background: #d1fae5;
+  color: #007a52;
+  background: #e8fff5;
 }
 
 .status-badge.degraded {
-  color: #b45309;
-  background: #fef3c7;
+  color: #8a6a2f;
+  background: #faf7f2;
 }
 
 .status-badge.down {
-  color: #b91c1c;
-  background: #fee2e2;
+  color: #e05c5c;
+  background: #fff7f7;
 }
 
 .status-badge.unknown {
@@ -966,15 +976,15 @@ const styles = `
 }
 
 .bar-fill.red {
-  background: #ef4444;
+  background: #e05c5c;
 }
 
 .bar-fill.orange {
-  background: #d99a26;
+  background: #d4c5a9;
 }
 
 .bar-fill.green {
-  background: #10b981;
+  background: #7ec8c8;
 }
 
 .bar-fill.navy {
@@ -1046,18 +1056,18 @@ const styles = `
 }
 
 .risk-badge.high {
-  color: #dc2626;
-  background: #fee2e2;
+  color: #e05c5c;
+  background: #fff7f7;
 }
 
 .risk-badge.medium {
-  color: #d97706;
-  background: #fef3c7;
+  color: #8a6a2f;
+  background: #faf7f2;
 }
 
 .risk-badge.low {
-  color: #059669;
-  background: #d1fae5;
+  color: #1e2a4a;
+  background: #f6f1e8;
 }
 
 .risk-badge.unknown {
@@ -1110,8 +1120,24 @@ const styles = `
   font-weight: 700;
 }
 
-.cdr-score span:first-child {
-  color: #dc2626;
+.cdr-prob {
+  font-weight: 700;
+}
+
+.cdr-prob.high {
+  color: #e05c5c;
+}
+
+.cdr-prob.medium {
+  color: #8a6a2f;
+}
+
+.cdr-prob.low {
+  color: #1e2a4a;
+}
+
+.cdr-prob.unknown {
+  color: #64748b;
 }
 
 
