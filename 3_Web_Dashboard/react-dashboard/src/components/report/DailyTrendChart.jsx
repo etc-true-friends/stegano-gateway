@@ -1,6 +1,16 @@
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getActionBucket, getEventDate, getVerdictBucket } from '../../utils/detectionStats';
 
+const PALETTE = {
+  navy: '#1e2a4a',
+  beige: '#d4c5a9',
+  border: '#e8e0d0',
+  muted: '#64748b',
+  low: '#7ec8c8',
+  high: '#e05c5c',
+  policy: '#8a3ffc',
+};
+
 function makeDailyRows(logs) {
   const counts = {};
 
@@ -17,6 +27,8 @@ function makeDailyRows(logs) {
         sanitized: 0,
         quarantine: 0,
         policy: 0,
+        mail: 0,
+        other: 0,
       };
     }
 
@@ -39,15 +51,17 @@ export default function DailyTrendChart({ logs, mode = 'verdict' }) {
 
   const bars = mode === 'action'
     ? [
-        { key: 'bypass', name: '통과', fill: '#059669' },
-        { key: 'sanitized', name: 'CDR 무해화', fill: '#5a7fa8' },
-        { key: 'quarantine', name: '격리', fill: '#dc2626' },
-        { key: 'policy', name: '정책 처리', fill: '#8a3ffc' },
+        { key: 'sanitized', name: 'CDR 무해화', fill: PALETTE.navy },
+        { key: 'policy', name: '정책 처리', fill: PALETTE.policy },
+        { key: 'quarantine', name: '격리/대체', fill: PALETTE.high },
+        { key: 'bypass', name: '정상 통과', fill: PALETTE.low },
+        { key: 'mail', name: '메일 첨부', fill: PALETTE.beige },
+        { key: 'other', name: '기타', fill: PALETTE.muted },
       ]
     : [
-        { key: 'clean', name: '정상', fill: '#059669' },
-        { key: 'suspicious', name: '위협', fill: '#dc2626' },
-        { key: 'unscanned', name: '미탐지', fill: '#d97706' },
+        { key: 'clean', name: '정상', fill: PALETTE.low },
+        { key: 'suspicious', name: '위협', fill: PALETTE.high },
+        { key: 'unscanned', name: '미검사', fill: PALETTE.beige },
       ];
 
   return (
@@ -56,8 +70,20 @@ export default function DailyTrendChart({ logs, mode = 'verdict' }) {
         <CartesianGrid strokeDasharray="3 3" stroke="#f0e8d8" />
         <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
         <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} allowDecimals={false} />
-        <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid #e8e0d0', fontSize: 11, borderRadius: 8 }} />
-        <Legend formatter={(value) => <span style={{ fontSize: 11, color: '#64748b' }}>{value}</span>} />
+        <Tooltip
+          cursor={{ fill: 'rgba(30, 42, 74, 0.04)' }}
+          contentStyle={{
+            background: '#ffffff',
+            border: `1px solid ${PALETTE.border}`,
+            color: PALETTE.navy,
+            fontSize: 11,
+            borderRadius: 8,
+          }}
+        />
+        <Legend
+          wrapperStyle={{ paddingTop: 8 }}
+          formatter={(value) => <span style={{ fontSize: 11, color: PALETTE.muted }}>{value}</span>}
+        />
         {bars.map(bar => (
           <Bar key={bar.key} dataKey={bar.key} name={bar.name} fill={bar.fill} radius={[4, 4, 0, 0]} />
         ))}
