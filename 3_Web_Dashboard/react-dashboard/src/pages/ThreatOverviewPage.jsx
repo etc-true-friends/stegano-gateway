@@ -1012,7 +1012,7 @@ const styles = `
 }
 
 .event-table-wrap {
-  max-height: 360px;
+  max-height: 620px;
   overflow: auto;
   padding: 20px;
 }
