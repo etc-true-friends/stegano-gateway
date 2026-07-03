@@ -39,11 +39,24 @@ function makeLog(minutesAgo) {
   const prob = parseFloat((Math.random() * 100).toFixed(1));
   const risk_level = prob >= 70 ? 'HIGH' : prob >= 40 ? 'MEDIUM' : 'LOW';
   const verdict = prob >= 50 ? 'SUSPICIOUS' : 'CLEAN';
+  const isPolicy = verdict === 'SUSPICIOUS' && prob >= 88;
+  const isCdr = verdict === 'SUSPICIOUS' && !isPolicy;
+  const aletheia_result = verdict === 'CLEAN'
+    ? ['CLEAN', 'SKIPPED', 'UNAVAILABLE'][randomBetween(0, 2)]
+    : ['SUSPICIOUS', 'CLEAN', 'UNAVAILABLE'][randomBetween(0, 2)];
   const sender_email = USERS[randomBetween(0, USERS.length - 1)];
   let recipient_email = USERS[randomBetween(0, USERS.length - 1)];
   if (recipient_email === sender_email) {
     recipient_email = USERS[(USERS.indexOf(sender_email) + 1) % USERS.length];
   }
+  const detection_engine = verdict !== 'SUSPICIOUS'
+    ? null
+    : isPolicy
+      ? 'Policy Engine'
+      : aletheia_result === 'SUSPICIOUS'
+        ? ['Aletheia SPA', 'Hybrid Detection'][randomBetween(0, 1)]
+        : ['SRNet Ensemble', 'Hybrid Detection'][randomBetween(0, 1)];
+
   return {
     timestamp: isoTimestamp(minutesAgo),
     original_name: FILE_NAMES[randomBetween(0, FILE_NAMES.length - 1)],
@@ -53,12 +66,12 @@ function makeLog(minutesAgo) {
     stego_probability: prob,
     risk_level,
     verdict,
-    action: verdict === 'SUSPICIOUS' ? (prob >= 70 ? 'quarantined' : 'sanitized') : 'passed',
-    // 정상은 빈값, 위험 건만 탐지 엔진 부여 (SRNet Ensemble / Hybrid Detection / Policy Engine)
-    detection_engine:
-      verdict !== 'SUSPICIOUS'
-        ? null
-        : ['SRNet Ensemble', 'Hybrid Detection', 'Policy Engine'][randomBetween(0, 2)],
+    aletheia_result,
+    action: verdict === 'SUSPICIOUS' ? (isPolicy ? 'policy_blocked' : prob >= 70 ? 'quarantined' : 'sanitized') : 'passed',
+    policy_reason: isPolicy ? '고위험 확률 및 Aletheia 의심 결과가 정책 임계값을 초과했습니다.' : null,
+    cdr_result: isCdr ? (prob >= 70 ? '격리 후 원본 보관' : 'CDR 무해화 처리 완료') : null,
+    // 정상은 빈값, 위험 건만 탐지 엔진 부여 (SRNet Ensemble / Aletheia SPA / Hybrid Detection / Policy Engine)
+    detection_engine,
   };
 }
 

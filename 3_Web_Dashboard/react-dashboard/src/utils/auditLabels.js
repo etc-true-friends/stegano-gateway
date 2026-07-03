@@ -36,18 +36,86 @@ export function getVerdictLabel(verdict) {
 // 위험도 뱃지처럼 배경은 연하게, 글씨는 같은 계열 진한 색으로.
 export const ENGINE_COLORS = {
   'SRNet Ensemble': '#3b82f6',
-  'Hybrid Detection': '#8a3ffc',
+  'Aletheia SPA': '#8a3ffc',
+  'Hybrid Detection': '#0f766e',
   'Policy Engine': '#e0894e',
 };
 
 export const ENGINE_BG = {
   'SRNet Ensemble': '#eff6ff',
-  'Hybrid Detection': '#f4edff',
+  'Aletheia SPA': '#f4edff',
+  'Hybrid Detection': '#ecfdf5',
   'Policy Engine': '#fdf3ea',
 };
 
 export function getEngineLabel(log) {
   return log?.detection_engine || '-';
+}
+
+export const ALETHEIA_COLORS = {
+  CLEAN: '#059669',
+  SUSPICIOUS: '#dc2626',
+  SKIPPED: '#64748b',
+  UNAVAILABLE: '#d97706',
+};
+
+export const ALETHEIA_BG = {
+  CLEAN: '#f0fdf4',
+  SUSPICIOUS: '#fef2f2',
+  SKIPPED: '#f1f5f9',
+  UNAVAILABLE: '#fffbeb',
+};
+
+export function getAletheiaResult(log) {
+  const raw =
+    log?.aletheia_result ??
+    log?.aletheia_status ??
+    log?.aletheia_verdict ??
+    log?.spa_result ??
+    log?.spa_status ??
+    log?.aletheia?.result ??
+    log?.aletheia?.status;
+  const value = String(raw || '').trim().toUpperCase();
+  if (['CLEAN', 'SUSPICIOUS', 'SKIPPED', 'UNAVAILABLE'].includes(value)) return value;
+  if (value === 'PASS' || value === 'PASSED' || value === 'NORMAL') return 'CLEAN';
+  if (value === 'FOUND' || value === 'DETECTED' || value === 'WARNING') return 'SUSPICIOUS';
+  if (value === 'NOT_RUN' || value === 'NOT RUN' || value === 'BYPASSED') return 'SKIPPED';
+  if (value === 'ERROR' || value === 'FAILED' || value === 'TIMEOUT') return 'UNAVAILABLE';
+  return '-';
+}
+
+export function getAuditLogKey(log) {
+  if (!log) return '';
+  const stableId = log.audit_id || log.id || log.file_id || log.attachment_id;
+  if (stableId) return String(stableId);
+  return [
+    log.timestamp,
+    log.original_name,
+    log.sender_email,
+    log.recipient_email,
+    log.action,
+  ].map(value => String(value || '')).join('|');
+}
+
+export function findAuditLogByKey(logs, key) {
+  return (logs || []).find(log => getAuditLogKey(log) === key);
+}
+
+export function getPolicyReason(log) {
+  return log?.policy_reason
+    || log?.policy_detection_reason
+    || log?.policy_rule
+    || log?.blocked_reason
+    || log?.reason
+    || (isPolicyBlockedLog(log) ? '정책 조건에 따라 차단 또는 대체 처리되었습니다.' : '-');
+}
+
+export function getCdrResult(log) {
+  return log?.cdr_result
+    || log?.cdr_status
+    || log?.cdr_process_result
+    || log?.sanitization_result
+    || (isCdrLog(log) ? 'CDR 무해화 처리 완료' : '-');
 }
 
 export function getActionLabel(action) {

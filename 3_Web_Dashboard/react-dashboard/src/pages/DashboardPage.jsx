@@ -3,6 +3,7 @@ import StatCards from '../components/dashboard/StatCards';
 import RiskChart from '../components/dashboard/RiskChart';
 import RecentEvents from '../components/dashboard/RecentEvents';
 import ExtChart from '../components/dashboard/ExtChart';
+import AuditLogTable from '../components/dashboard/AuditLogTable';
 
 export default function DashboardPage({ audit }) {
   const { total_count: total, suspicious_count: suspicious, logs } = audit;
@@ -29,6 +30,12 @@ export default function DashboardPage({ audit }) {
       <div className="grid-full">
         <PanelCard title="확장자별 탐지 현황">
           <ExtChart logs={logs} />
+        </PanelCard>
+      </div>
+
+      <div className="grid-full">
+        <PanelCard title="최근 감사 로그">
+          <AuditLogTable logs={logs} />
         </PanelCard>
       </div>
     </div>
