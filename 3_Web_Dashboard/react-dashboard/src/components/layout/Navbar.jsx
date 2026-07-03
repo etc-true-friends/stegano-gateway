@@ -5,7 +5,9 @@ export default function Navbar({ online, usingMock, onRefresh }) {
   return (
     <header className="navbar">
       <div className="navbar-brand">
-        <img src={mascot} alt="mascot" style={{ width: 80, height: 80, objectFit: 'contain' }} />
+        <span className="brand-mark">
+          <img src={mascot} alt="" className="brand-mascot" />
+        </span>
         <span className="brand-team">
           /etc/friends<span className="cursor"></span>
         </span>

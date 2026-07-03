@@ -22,14 +22,34 @@ body {
   box-shadow: 0 1px 8px rgba(30, 42, 74, 0.06);
   flex-shrink: 0; z-index: 10;
 }
-.navbar-brand { display: flex; align-items: center; gap: 2px; }
+.navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.brand-mark {
+  width: 58px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-right: -3px;
+}
+.brand-mascot {
+  width: 62px;
+  height: 62px;
+  object-fit: contain;
+  display: block;
+}
 .brand-icon    { color: #1e2a4a; }
 .brand-team    {
   font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 13px; font-weight: 600;
   color: #2d9e3a; letter-spacing: 2px; text-transform: uppercase;
 }
-.brand-divider { color: #d4c5a9; }
+.brand-divider { color: #d4c5a9; margin: 0 -2px; }
 .brand-title   {
   font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 15px; font-weight: 700; color: #1e2a4a;
