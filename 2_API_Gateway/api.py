@@ -18,7 +18,7 @@ import shlex
 import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -1151,8 +1151,15 @@ def _finalize_report_row(row: dict) -> dict:
     return row
 
 
+def _set_no_cache_headers(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+
 @app.get("/reports/daily-detections")
-def get_daily_detection_report(start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+def get_daily_detection_report(response: Response, start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+    _set_no_cache_headers(response)
     period = period if period in ("day", "week", "month") else "day"
     rows_by_bucket: dict[str, dict] = {}
 
@@ -1171,7 +1178,8 @@ def get_daily_detection_report(start_date: str | None = None, end_date: str | No
 
 
 @app.get("/reports/risk-trend")
-def get_risk_trend_report(start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+def get_risk_trend_report(response: Response, start_date: str | None = None, end_date: str | None = None, period: str = "day"):
+    _set_no_cache_headers(response)
     period = period if period in ("day", "week", "month") else "day"
     rows_by_bucket: dict[str, dict] = {}
 
@@ -1206,7 +1214,8 @@ def get_risk_trend_report(start_date: str | None = None, end_date: str | None = 
 
 
 @app.get("/reports/file-types")
-def get_file_type_report(start_date: str | None = None, end_date: str | None = None):
+def get_file_type_report(response: Response, start_date: str | None = None, end_date: str | None = None):
+    _set_no_cache_headers(response)
     rows_by_key: dict[tuple[str, str], dict] = {}
 
     for log in _filter_report_logs(get_audit().get("logs", []), start_date, end_date):

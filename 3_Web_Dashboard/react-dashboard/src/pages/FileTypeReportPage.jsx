@@ -1,40 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import PanelCard from '../components/common/PanelCard';
 import DateRangeFilter from '../components/report/DateRangeFilter';
 import ExtSummary from '../components/report/ExtSummary';
 import ExtChart from '../components/dashboard/ExtChart';
-import { fetchFileTypeReport } from '../api/gateway';
 import { useDateRangeFilter } from '../hooks/useDateRangeFilter';
 import { makeFileTypeRows } from '../utils/reportStats';
 
 export default function FileTypeReportPage({ audit }) {
   const { logs } = audit;
   const { startDate, setStartDate, endDate, setEndDate, activeRange, applyQuickRange, filteredLogs } = useDateRangeFilter(logs);
-  const [remoteRows, setRemoteRows] = useState(null);
-  const [usingFallback, setUsingFallback] = useState(false);
-
-  const loadReport = useCallback(async () => {
-    try {
-      const data = await fetchFileTypeReport({
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-      });
-      setRemoteRows(data.rows || []);
-      setUsingFallback(false);
-    } catch {
-      setRemoteRows(null);
-      setUsingFallback(true);
-    }
-  }, [startDate, endDate]);
-
-  useEffect(() => {
-    const id = setTimeout(loadReport, 0);
-    return () => clearTimeout(id);
-  }, [loadReport]);
 
   const reportRows = useMemo(
-    () => remoteRows || makeFileTypeRows(filteredLogs),
-    [remoteRows, filteredLogs],
+    () => makeFileTypeRows(filteredLogs),
+    [filteredLogs],
   );
 
   return (
@@ -56,7 +34,7 @@ export default function FileTypeReportPage({ audit }) {
           textAlign: 'right',
         }}
       >
-        {usingFallback ? '로컬 로그 집계' : 'API 집계'} · 확장자/MIME별 탐지 건수 및 위험도 분포
+        감사 로그 집계 · 확장자/MIME별 탐지 건수 및 위험도 분포
       </div>
 
       <div style={{ marginTop: 16 }}>

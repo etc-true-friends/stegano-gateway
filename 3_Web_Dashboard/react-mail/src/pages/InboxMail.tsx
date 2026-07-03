@@ -27,21 +27,6 @@ export default function InboxMail() {
   const [search, setSearch] = React.useState('');
 
 
-  React.useEffect(() => {
-    const load = async () => {
-      const user = getStoredAuthUser();
-      const email = user?.email ?? 'admin@gmail.com';
-      try {
-        const data = await fetchInboxMails(email);
-        setEmails(data as Email[]);
-        setSelectedEmail(data[0] ?? null);
-      } catch {
-        // API 연결 실패 시 빈 목록을 유지합니다.
-      }
-    };
-    load();
-  })
-
   const loadInboxMails = React.useCallback(async () => {
     const user = getStoredAuthUser();
     const email = user?.email ?? 'admin@gmail.com';
@@ -152,7 +137,7 @@ export default function InboxMail() {
 
         {/* Email content panel */}
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
-          <EmailContent email={selectedEmail} onDeleted={loadInboxMails} />
+          <EmailContent email={selectedEmail} onDeleted={handleDeleted} />
         </Box>
       </Box>
 
