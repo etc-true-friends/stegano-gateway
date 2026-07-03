@@ -1,4 +1,4 @@
-import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog } from '../../utils/auditLabels';
+import { getActionLabel, getRiskLabel, getVerdictLabel, isPolicyBlockedLog, getEngineLabel, ENGINE_COLORS, ENGINE_BG } from '../../utils/auditLabels';
 
 const RISK_DOT = { HIGH: '●', MEDIUM: '●', LOW: '●' };
 
@@ -19,6 +19,7 @@ export default function AuditLogTable({ logs }) {
             <th>위험도(%)</th>
             <th>등급</th>
             <th>판정</th>
+            <th>탐지 엔진</th>
             <th>처리</th>
           </tr>
         </thead>
@@ -38,6 +39,23 @@ export default function AuditLogTable({ logs }) {
                   </span>
                 </td>
                 <td>{RISK_DOT[log.risk_level] || '○'} {isPolicy ? '정책' : getVerdictLabel(verdict)}</td>
+                <td>
+                  {log.detection_engine ? (
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: 20,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: ENGINE_COLORS[log.detection_engine] || '#64748b',
+                      background: ENGINE_BG[log.detection_engine] || '#f1f5f9',
+                    }}>
+                      {getEngineLabel(log)}
+                    </span>
+                  ) : (
+                    <span style={{ color: '#94a3b8' }}>-</span>
+                  )}
+                </td>
                 <td>{getActionLabel(log.action)}</td>
               </tr>
             );
