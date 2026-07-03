@@ -35,6 +35,23 @@ const DividerLine = styled(Box)({
   backgroundColor: '#dddddd',
 });
 
+const loginTextFieldSx = {
+  '& .MuiOutlinedInput-root': {
+    borderRadius: 0,
+    height: 49,
+    backgroundColor: '#fff',
+    color: '#111827',
+  },
+  '& .MuiOutlinedInput-input': {
+    color: '#111827',
+    WebkitTextFillColor: '#111827',
+  },
+  '& .MuiOutlinedInput-input::placeholder': {
+    color: '#667085',
+    opacity: 1,
+  },
+};
+
 function TeamLogo() {
   return (
     <Box sx={{ textAlign: 'center', lineHeight: 1 }}>
@@ -173,13 +190,7 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
               fullWidth
               variant="outlined"
               color={emailError ? 'error' : 'primary'}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 0,
-                  height: 49,
-                  backgroundColor: '#fff',
-                },
-              }}
+              sx={loginTextFieldSx}
             />
 
             <TextField
@@ -194,13 +205,7 @@ export default function SignIn(props: { disableCustomTheme?: boolean }) {
               fullWidth
               variant="outlined"
               color={passwordError ? 'error' : 'primary'}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 0,
-                  height: 49,
-                  backgroundColor: '#fff',
-                },
-              }}
+              sx={loginTextFieldSx}
             />
 
             <Button
