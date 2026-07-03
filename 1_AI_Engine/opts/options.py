@@ -43,8 +43,8 @@ def arguments():
     )
 
     # 8. Local performance tuning
-    parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--prefetch_factor", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=int(os.environ.get("SRNET_NUM_WORKERS", "8")))
+    parser.add_argument("--prefetch_factor", type=int, default=int(os.environ.get("SRNET_PREFETCH_FACTOR", "2")))
     parser.add_argument("--use_amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cudnn_benchmark", action=argparse.BooleanOptionalAction, default=True)
 
