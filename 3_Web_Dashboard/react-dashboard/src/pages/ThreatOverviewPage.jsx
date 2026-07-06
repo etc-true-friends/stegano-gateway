@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     fetchThreatOverview,
-    recordThreatOverviewView,
-    heartbeatThreatOverview,
 } from '../api/gateway';
 
 const number = (value) => {
@@ -72,17 +70,6 @@ const maxValue = (obj) => {
     return Math.max(...values, 1);
 };
 
-const recordPageViewOncePerLoad = () => {
-    if (typeof window === 'undefined') return true;
-
-    if (window.__threatOverviewViewRecorded) {
-        return false;
-    }
-
-    window.__threatOverviewViewRecorded = true;
-    return true;
-};
-
 function SummaryCard({ label, value, subText, tone = 'default' }) {
     return (
         <div className={`summary-card ${tone}`}>
@@ -122,10 +109,6 @@ function SmallMetric({ label, value, unit = '' }) {
 
 export default function ThreatOverviewPage() {
     const [overview, setOverview] = useState(null);
-    const [visitStats, setVisitStats] = useState({
-        total_views: 0,
-        current_visitors: 0,
-    });
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
@@ -150,29 +133,11 @@ export default function ThreatOverviewPage() {
         }
     };
 
-    const loadVisitStats = async (increaseView = false) => {
-        try {
-            const data = increaseView
-                ? await recordThreatOverviewView()
-                : await heartbeatThreatOverview();
-
-            setVisitStats({
-                total_views: number(data?.total_views),
-                current_visitors: number(data?.current_visitors),
-            });
-        } catch (error) {
-            console.error('방문자 통계 조회 실패:', error);
-        }
-    };
-
     const handleRefresh = async () => {
         try {
             setRefreshing(true);
 
-            await Promise.all([
-                loadOverview({ showLoading: false }),
-                loadVisitStats(true),
-            ]);
+            await loadOverview({ showLoading: false });
         } finally {
             setRefreshing(false);
         }
@@ -180,17 +145,6 @@ export default function ThreatOverviewPage() {
 
     useEffect(() => {
         loadOverview({ showLoading: true });
-
-        const shouldIncreaseView = recordPageViewOncePerLoad();
-        loadVisitStats(shouldIncreaseView);
-
-        const timer = setInterval(() => {
-            loadVisitStats(false);
-        }, 15000);
-
-        return () => {
-            clearInterval(timer);
-        };
     }, []);
 
     const summary = overview?.summary || {};
@@ -252,18 +206,6 @@ export default function ThreatOverviewPage() {
                 </div>
 
                 <div className="header-actions">
-                    <div className="visit-stats">
-                        <div className="visit-stat">
-                            <span>총 조회수</span>
-                            <strong>{number(visitStats.total_views)}</strong>
-                        </div>
-
-                        <div className="visit-stat">
-                            <span>현재 방문자</span>
-                            <strong>{number(visitStats.current_visitors)}</strong>
-                        </div>
-                    </div>
-
                     <button
                         type="button"
                         className="refresh-button"
@@ -594,30 +536,6 @@ const styles = `
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.visit-stats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.visit-stat {
-  min-width: 92px;
-}
-
-.visit-stat span {
-  display: block;
-  color: #64748b;
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.visit-stat strong {
-  display: block;
-  color: #0b1b44;
-  font-size: 18px;
-  font-weight: 600;
 }
 
 .refresh-button {
@@ -1186,14 +1104,6 @@ const styles = `
     width: 100%;
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .visit-stats {
-    width: 100%;
-  }
-
-  .visit-stat {
-    flex: 1;
   }
 
   .refresh-button {
