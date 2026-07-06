@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-const MAIL_REQUEST_TIMEOUT_MS = 120_000;
+const MAIL_REQUEST_TIMEOUT_MS = 300_000;
 
 export type ScanVerdict = 'CLEAN' | 'SUSPICIOUS';
 
