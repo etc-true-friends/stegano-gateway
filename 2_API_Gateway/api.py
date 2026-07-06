@@ -16,11 +16,13 @@ import sqlite3
 import imghdr
 import shlex
 import subprocess
+import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import PurePosixPath
 import torch
@@ -295,13 +297,69 @@ ALETHEIA_SUSPICIOUS_KEYWORDS = (
 )
 ALETHEIA_LOSSLESS_FORMATS = {"png", "bmp", "tiff", "tif"}
 MULTICROP_ENABLED = os.getenv("MULTICROP_ENABLED", "true").lower() not in {"0", "false", "no"}
-MULTICROP_MIN_SIDE = int(os.getenv("MULTICROP_MIN_SIDE", "512"))
+MULTICROP_MIN_SIDE = int(os.getenv("MULTICROP_MIN_SIDE", "1024"))
 MULTICROP_CROP_SIZE = int(os.getenv("MULTICROP_CROP_SIZE", "256"))
 MULTICROP_STRIDE = int(os.getenv("MULTICROP_STRIDE", "384"))
-MULTICROP_MAX_CROPS = int(os.getenv("MULTICROP_MAX_CROPS", "24"))
-MULTICROP_TOP_K = int(os.getenv("MULTICROP_TOP_K", "3"))
+MULTICROP_MAX_CROPS = int(os.getenv("MULTICROP_MAX_CROPS", "8"))
+MULTICROP_TOP_K = int(os.getenv("MULTICROP_TOP_K", "2"))
 MULTICROP_HIT_RATIO_THRESHOLD = float(os.getenv("MULTICROP_HIT_RATIO_THRESHOLD", "0.22"))
+INFERENCE_BATCH_SIZE = max(1, int(os.getenv("INFERENCE_BATCH_SIZE", "4")))
+MAX_IMAGE_UPLOAD_BYTES = int(os.getenv("MAX_IMAGE_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "16000000"))
+MAX_IMAGE_SIDE = int(os.getenv("MAX_IMAGE_SIDE", "8192"))
+SCAN_CONCURRENCY = max(1, int(os.getenv("SCAN_CONCURRENCY", "1")))
+SCAN_QUEUE_TIMEOUT = max(0.1, float(os.getenv("SCAN_QUEUE_TIMEOUT", "3")))
+SCAN_SEMAPHORE = asyncio.BoundedSemaphore(SCAN_CONCURRENCY)
 LOSSY_IMAGE_FORMATS = {"jpeg", "jpg", "webp"}
+
+
+async def _run_scan_job(func, *args):
+    try:
+        await asyncio.wait_for(SCAN_SEMAPHORE.acquire(), timeout=SCAN_QUEUE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="Scan queue is busy. Please retry shortly.",
+        )
+
+    try:
+        return await run_in_threadpool(func, *args)
+    finally:
+        SCAN_SEMAPHORE.release()
+
+
+def _validate_image_constraints(contents: bytes) -> None:
+    if len(contents) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image upload too large. Max {MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(contents)) as probe:
+            width, height = probe.size
+            probe.verify()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image file: {exc}")
+
+    if width <= 0 or height <= 0:
+        raise HTTPException(status_code=400, detail="Invalid image dimensions")
+
+    if width * height > MAX_IMAGE_PIXELS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image pixel count too large. Max {MAX_IMAGE_PIXELS} pixels.",
+        )
+
+    if max(width, height) > MAX_IMAGE_SIDE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image side length too large. Max {MAX_IMAGE_SIDE}px.",
+        )
 
 
 def _resolve_aletheia_command():
@@ -476,23 +534,41 @@ def _predict_ensemble_image(img, image_format: str | None = None) -> dict:
         and max(width, height) >= MULTICROP_MIN_SIDE
     )
     if use_multicrop:
-        boxes = _crop_boxes(width, height, MULTICROP_CROP_SIZE, MULTICROP_STRIDE, MULTICROP_MAX_CROPS)
-        if (0, 0, width, height) not in boxes:
-            boxes.append((0, 0, width, height))
+        full_box = (0, 0, width, height)
+        if MULTICROP_MAX_CROPS <= 1:
+            boxes = [full_box]
+        else:
+            boxes = _crop_boxes(
+                width,
+                height,
+                MULTICROP_CROP_SIZE,
+                MULTICROP_STRIDE,
+                MULTICROP_MAX_CROPS - 1,
+            )
+            if full_box not in boxes:
+                boxes.append(full_box)
         decision_policy = _multicrop_policy_for_format(image_format)
     else:
         boxes = [(0, 0, width, height)]
         decision_policy = "aggregate"
 
-    per_model_scores = {item["name"]: [] for item in ensemble_models}
-    with torch.no_grad():
-        for box in boxes:
-            crop = img.crop(box)
-            for item in ensemble_models:
-                tensor = _image_to_model_tensor(crop, item.get("input_mode", "rgb"))
-                output = item["model"](tensor)
-                prob = torch.exp(output[:, 1])[0].item()
-                per_model_scores[item["name"]].append(prob)
+    crop_images = [img.crop(box) for box in boxes]
+    per_model_scores = {}
+    with torch.inference_mode():
+        for item in ensemble_models:
+            values = []
+            for start in range(0, len(crop_images), INFERENCE_BATCH_SIZE):
+                selected = crop_images[start:start + INFERENCE_BATCH_SIZE]
+                batch = torch.cat(
+                    [
+                        _image_to_model_tensor(crop, item.get("input_mode", "rgb"))
+                        for crop in selected
+                    ],
+                    dim=0,
+                )
+                output = item["model"](batch)
+                values.extend(torch.exp(output[:, 1]).detach().cpu().tolist())
+            per_model_scores[item["name"]] = values
 
     scores = []
     for item in ensemble_models:
@@ -1965,6 +2041,8 @@ def _scan_image_bytes(contents: bytes, display_name: str, direction: str, file_i
     if img_format not in ["png", "jpeg"]:
         raise ValueError(f"Unsupported image type: {img_format}")
 
+    _validate_image_constraints(contents)
+
     safe_name = _safe_disk_name(display_name) or "stream"
     original_ext = os.path.splitext(safe_name)[1] or f".{img_format}"
 
@@ -2478,37 +2556,44 @@ async def scan_and_sanitize(
     is_zip_payload = zipfile.is_zipfile(io.BytesIO(contents))
 
     if filename_lower.endswith(".zip") or content_type in ARCHIVE_MIMES or is_zip_payload:
-      if not is_zip_payload:
-        raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
+        if not is_zip_payload:
+            raise HTTPException(status_code=400, detail="Unsupported archive format. ZIP only.")
 
-      result = _scan_archive_bytes(
-        contents,
-        file.filename or "archive.zip",
-        direction,
-        file_id
-      )
-      return {
-          "file_id": file_id,
-          "original_filename": result["download_name"],
-          "file_size": os.path.getsize(result["sanitized_path"]),
-          "mime_type": "application/zip",
-          "verdict": result["verdict"],
-          "risk_level": result["risk_level"],
-          "stego_probability": result["stego_probability"],
-          "model": "archive_cdr",
-          "model_scores": [],
-          "aletheia": "SKIPPED_ARCHIVE",
-          "archive": {
-              "image_count": result["image_count"],
-              "suspicious_count": result["suspicious_count"],
-              "policy_removed_count": result["policy_removed_count"],
-              "policy_findings": result["policy_findings"],
-          },
-          "sanitized_path": result["sanitized_path"],
-      }
+        result = await _run_scan_job(
+            _scan_archive_bytes,
+            contents,
+            file.filename or "archive.zip",
+            direction,
+            file_id,
+        )
+        return {
+            "file_id": file_id,
+            "original_filename": result["download_name"],
+            "file_size": os.path.getsize(result["sanitized_path"]),
+            "mime_type": "application/zip",
+            "verdict": result["verdict"],
+            "risk_level": result["risk_level"],
+            "stego_probability": result["stego_probability"],
+            "model": "archive_cdr",
+            "model_scores": [],
+            "aletheia": "SKIPPED_ARCHIVE",
+            "archive": {
+                "image_count": result["image_count"],
+                "suspicious_count": result["suspicious_count"],
+                "policy_removed_count": result["policy_removed_count"],
+                "policy_findings": result["policy_findings"],
+            },
+            "sanitized_path": result["sanitized_path"],
+        }
     
     try:
-        result = _scan_image_bytes(contents, file.filename or "stream", direction, file_id)
+        result = await _run_scan_job(
+            _scan_image_bytes,
+            contents,
+            file.filename or "stream",
+            direction,
+            file_id,
+        )
         ensemble_result = result.get("ensemble", {})
         return {
             "file_id": file_id,

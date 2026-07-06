@@ -42,9 +42,8 @@ class CDRSanitizer:
         elif img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")
 
-        data = list(img.getdata())
-        clean = Image.new(img.mode, img.size)
-        clean.putdata(data)
+        clean = img.copy()
+        clean.load()
         self.steps_log.append("Step 1: metadata and ancillary data stripped")
         return clean
 
@@ -127,8 +126,23 @@ class CDRSanitizer:
         output_path = str(Path(output_path).with_suffix(".jpg"))
         img.save(output_path, format="JPEG", quality=self.jpeg_quality)
 
-        original_rgb = np.array(original.convert("RGB"))
-        sanitized_rgb = np.array(Image.open(output_path).convert("RGB"))
+        original_rgb_image = original.convert("RGB")
+        with Image.open(output_path) as sanitized_file:
+            sanitized_rgb_image = sanitized_file.convert("RGB")
+
+        if original_rgb_image.size == sanitized_rgb_image.size:
+            max_diff_side = 1024
+            if max(original_rgb_image.size) > max_diff_side:
+                ratio = max_diff_side / max(original_rgb_image.size)
+                sample_size = (
+                    max(int(original_rgb_image.size[0] * ratio), 1),
+                    max(int(original_rgb_image.size[1] * ratio), 1),
+                )
+                original_rgb_image = original_rgb_image.resize(sample_size, Image.BILINEAR)
+                sanitized_rgb_image = sanitized_rgb_image.resize(sample_size, Image.BILINEAR)
+
+        original_rgb = np.array(original_rgb_image)
+        sanitized_rgb = np.array(sanitized_rgb_image)
         if original_rgb.shape == sanitized_rgb.shape:
             pixel_diff = float(np.mean(np.abs(original_rgb.astype(int) - sanitized_rgb.astype(int))))
         else:
