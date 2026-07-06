@@ -70,6 +70,11 @@ async function scanAttachment(file: File): Promise<ScanResult> {
   const res = await axios.post<ScanResult>(`${API_BASE}/scan`, form, {
     timeout: MAIL_REQUEST_TIMEOUT_MS,
   });
+  console.info('[mail-send] scan response', {
+    fileName: file.name,
+    fileSize: file.size,
+    response: res.data,
+  });
   return normalizeScanResult(file, res.data);
 }
 
@@ -110,6 +115,12 @@ export async function sendMail(params: {
     form.append('attachment_mimetypes', JSON.stringify(scannedFiles.map((f) => f.mime_type)));
     form.append('attachment_sizes', JSON.stringify(scannedFiles.map((f) => f.file_size)));
   }
+
+  console.info('[mail-send] submit mail', {
+    senderId,
+    recipientId,
+    attachmentIds: scannedFiles.map((f) => f.file_id),
+  });
 
   const res = await axios.post<{ id: number }>(`${API_BASE}/mails/send`, form, {
     timeout: MAIL_REQUEST_TIMEOUT_MS,

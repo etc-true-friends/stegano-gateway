@@ -123,7 +123,8 @@ export default function ComposeModal({ open, onClose }: Props) {
         resetForm();
         onClose();
       }, 1500);
-    } catch {
+    } catch (error) {
+      console.error('[mail-send] failed', error);
       setSendState('error');
     }
   };
