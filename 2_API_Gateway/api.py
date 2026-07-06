@@ -31,6 +31,14 @@ from urllib.parse import quote
 import string
 from collections import Counter
 
+TORCH_NUM_THREADS = int(os.getenv("TORCH_NUM_THREADS", "1"))
+TORCH_INTEROP_THREADS = int(os.getenv("TORCH_INTEROP_THREADS", "1"))
+torch.set_num_threads(max(1, TORCH_NUM_THREADS))
+try:
+    torch.set_num_interop_threads(max(1, TORCH_INTEROP_THREADS))
+except RuntimeError:
+    pass
+
 
 # MSA 구조 경로 인식 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -276,7 +284,7 @@ ensemble_models, ensemble_config = _load_ensemble_models()
 # 2선 방어선 CDR 무해화 요원 초기화
 sanitizer = CDRSanitizer(jpeg_quality=85, resize_ratio=0.95)
 
-ALETHEIA_TIMEOUT = float(os.getenv("ALETHEIA_TIMEOUT", "8"))
+ALETHEIA_TIMEOUT = float(os.getenv("ALETHEIA_TIMEOUT", "4"))
 ALETHEIA_SUSPICIOUS_KEYWORDS = (
     "suspicious",
     "stego",
@@ -289,8 +297,8 @@ ALETHEIA_LOSSLESS_FORMATS = {"png", "bmp", "tiff", "tif"}
 MULTICROP_ENABLED = os.getenv("MULTICROP_ENABLED", "true").lower() not in {"0", "false", "no"}
 MULTICROP_MIN_SIDE = int(os.getenv("MULTICROP_MIN_SIDE", "512"))
 MULTICROP_CROP_SIZE = int(os.getenv("MULTICROP_CROP_SIZE", "256"))
-MULTICROP_STRIDE = int(os.getenv("MULTICROP_STRIDE", "192"))
-MULTICROP_MAX_CROPS = int(os.getenv("MULTICROP_MAX_CROPS", "32"))
+MULTICROP_STRIDE = int(os.getenv("MULTICROP_STRIDE", "384"))
+MULTICROP_MAX_CROPS = int(os.getenv("MULTICROP_MAX_CROPS", "24"))
 MULTICROP_TOP_K = int(os.getenv("MULTICROP_TOP_K", "3"))
 MULTICROP_HIT_RATIO_THRESHOLD = float(os.getenv("MULTICROP_HIT_RATIO_THRESHOLD", "0.22"))
 LOSSY_IMAGE_FORMATS = {"jpeg", "jpg", "webp"}
