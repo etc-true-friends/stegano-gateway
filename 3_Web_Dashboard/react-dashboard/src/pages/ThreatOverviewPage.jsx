@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     fetchThreatOverview,
-    recordThreatOverviewView,
-    heartbeatThreatOverview,
 } from '../api/gateway';
 
 const number = (value) => {
@@ -59,20 +57,17 @@ const riskClass = (risk) => {
     return 'unknown';
 };
 
+const probabilityRiskClass = (value) => {
+    const numeric = Number(value ?? 0);
+
+    if (numeric >= 75) return 'high';
+    if (numeric >= 30) return 'medium';
+    return 'low';
+};
+
 const maxValue = (obj) => {
     const values = Object.values(obj || {}).map((value) => number(value));
     return Math.max(...values, 1);
-};
-
-const recordPageViewOncePerLoad = () => {
-    if (typeof window === 'undefined') return true;
-
-    if (window.__threatOverviewViewRecorded) {
-        return false;
-    }
-
-    window.__threatOverviewViewRecorded = true;
-    return true;
 };
 
 function SummaryCard({ label, value, subText, tone = 'default' }) {
@@ -114,10 +109,6 @@ function SmallMetric({ label, value, unit = '' }) {
 
 export default function ThreatOverviewPage() {
     const [overview, setOverview] = useState(null);
-    const [visitStats, setVisitStats] = useState({
-        total_views: 0,
-        current_visitors: 0,
-    });
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
@@ -142,29 +133,11 @@ export default function ThreatOverviewPage() {
         }
     };
 
-    const loadVisitStats = async (increaseView = false) => {
-        try {
-            const data = increaseView
-                ? await recordThreatOverviewView()
-                : await heartbeatThreatOverview();
-
-            setVisitStats({
-                total_views: number(data?.total_views),
-                current_visitors: number(data?.current_visitors),
-            });
-        } catch (error) {
-            console.error('방문자 통계 조회 실패:', error);
-        }
-    };
-
     const handleRefresh = async () => {
         try {
             setRefreshing(true);
 
-            await Promise.all([
-                loadOverview({ showLoading: false }),
-                loadVisitStats(true),
-            ]);
+            await loadOverview({ showLoading: false });
         } finally {
             setRefreshing(false);
         }
@@ -172,17 +145,6 @@ export default function ThreatOverviewPage() {
 
     useEffect(() => {
         loadOverview({ showLoading: true });
-
-        const shouldIncreaseView = recordPageViewOncePerLoad();
-        loadVisitStats(shouldIncreaseView);
-
-        const timer = setInterval(() => {
-            loadVisitStats(false);
-        }, 15000);
-
-        return () => {
-            clearInterval(timer);
-        };
     }, []);
 
     const summary = overview?.summary || {};
@@ -244,18 +206,6 @@ export default function ThreatOverviewPage() {
                 </div>
 
                 <div className="header-actions">
-                    <div className="visit-stats">
-                        <div className="visit-stat">
-                            <span>총 조회수</span>
-                            <strong>{number(visitStats.total_views)}</strong>
-                        </div>
-
-                        <div className="visit-stat">
-                            <span>현재 방문자</span>
-                            <strong>{number(visitStats.current_visitors)}</strong>
-                        </div>
-                    </div>
-
                     <button
                         type="button"
                         className="refresh-button"
@@ -396,7 +346,9 @@ export default function ThreatOverviewPage() {
                                             <p>{formatDateTime(item.processed_at)}</p>
                                         </div>
                                         <div className="cdr-score">
-                                            <span>{percent(item.stego_probability)}</span>
+                                            <span className={`cdr-prob ${probabilityRiskClass(item.stego_probability)}`}>
+                                                원본 탐지율 {percent(item.stego_probability)}
+                                            </span>
 
                                         </div>
                                     </div>
@@ -586,30 +538,6 @@ const styles = `
   gap: 12px;
 }
 
-.visit-stats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.visit-stat {
-  min-width: 92px;
-}
-
-.visit-stat span {
-  display: block;
-  color: #64748b;
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.visit-stat strong {
-  display: block;
-  color: #0b1b44;
-  font-size: 18px;
-  font-weight: 600;
-}
-
 .refresh-button {
   height: 42px;
   padding: 0 16px;
@@ -681,15 +609,15 @@ const styles = `
 }
 
 .summary-card.red .summary-value {
-  color: #dc2626;
+  color: #e05c5c;
 }
 
 .summary-card.orange .summary-value {
-  color: #d97706;
+  color: #8a6a2f;
 }
 
 .summary-card.green .summary-value {
-  color: #059669;
+  color: #008f72;
 }
 
 .overview-grid {
@@ -826,18 +754,18 @@ const styles = `
 }
 
 .impact-count.high {
-  color: #dc2626;
-  background: #fee2e2;
+  color: #e05c5c;
+  background: #fdf1ef;
 }
 
 .impact-count.medium {
-  color: #d97706;
-  background: #fef3c7;
+  color: #8a6a2f;
+  background: #f4ead7;
 }
 
 .impact-count.low {
-  color: #2563eb;
-  background: #dbeafe;
+  color: #1e2a4a;
+  background: #e7eef0;
 }
 
 .status-list {
@@ -887,8 +815,8 @@ const styles = `
 }
 
 .status-badge.running {
-  color: #047857;
-  background: #d1fae5;
+  color: #008f72;
+  background: #dff5ed;
 }
 
 .status-badge.degraded {
@@ -966,15 +894,15 @@ const styles = `
 }
 
 .bar-fill.red {
-  background: #ef4444;
+  background: #e05c5c;
 }
 
 .bar-fill.orange {
-  background: #d99a26;
+  background: #d4c5a9;
 }
 
 .bar-fill.green {
-  background: #10b981;
+  background: #7ec8c8;
 }
 
 .bar-fill.navy {
@@ -1025,7 +953,7 @@ const styles = `
 }
 
 .event-table tr:hover td {
-  background: #fff4e1;
+  background: #f8f1e8;
 }
 
 .file-name {
@@ -1046,18 +974,18 @@ const styles = `
 }
 
 .risk-badge.high {
-  color: #dc2626;
-  background: #fee2e2;
+  color: #e05c5c;
+  background: #fdf1ef;
 }
 
 .risk-badge.medium {
-  color: #d97706;
-  background: #fef3c7;
+  color: #8a6a2f;
+  background: #f4ead7;
 }
 
 .risk-badge.low {
-  color: #059669;
-  background: #d1fae5;
+  color: #008f72;
+  background: #dff5ed;
 }
 
 .risk-badge.unknown {
@@ -1110,8 +1038,16 @@ const styles = `
   font-weight: 700;
 }
 
-.cdr-score span:first-child {
-  color: #dc2626;
+.cdr-prob.high {
+  color: #e05c5c;
+}
+
+.cdr-prob.medium {
+  color: #8a6a2f;
+}
+
+.cdr-prob.low {
+  color: #1e2a4a;
 }
 
 
@@ -1168,14 +1104,6 @@ const styles = `
     width: 100%;
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .visit-stats {
-    width: 100%;
-  }
-
-  .visit-stat {
-    flex: 1;
   }
 
   .refresh-button {
